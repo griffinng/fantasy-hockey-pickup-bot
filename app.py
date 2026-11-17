@@ -330,14 +330,19 @@ with tab_pickups:
                 info = advice.streaks.get(p.nhl_id)
                 if not info:
                     continue
+                # getattr throughout: Streamlit reloads this script on change
+                # but keeps already-imported modules in memory, so a running
+                # server can hold an older StreakInfo than the one this code
+                # expects. A missing field should degrade a column, not take
+                # the whole page down with a traceback.
                 hot_rows.append({
                     "Player": p.name,
                     "Tm": p.team,
                     "Pos": names.display_position(p.position),
-                    "Heat": info.heat,
-                    "vs Self": info.breakout,
-                    "Streak": info.label,
-                    "Cooling": "yes" if info.cooling else "",
+                    "Heat": getattr(info, "heat", 0.0),
+                    "vs Self": getattr(info, "breakout", 0.0),
+                    "Streak": getattr(info, "label", "-"),
+                    "Cooling": "yes" if getattr(info, "cooling", False) else "",
                     "GP": p.games_left,
                     "Proj week": round(p.week_points, 1),
                     "Role": advisor.role_label(p),

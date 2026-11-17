@@ -505,12 +505,13 @@ def format_advice(advice: Advice) -> str:
             info = advice.streaks.get(p.nhl_id)
             if not info:
                 continue
-            flag = " (cooling)" if info.cooling else ""
+            flag = " (cooling)" if getattr(info, "cooling", False) else ""
             lines.append(
                 f"{p.name:<24} {p.team:<4} "
                 f"{names.display_position(p.position):<4} {p.games_left:>3} "
-                f"{p.week_points:>7.1f} {info.heat:>6.1f} "
-                f"{info.breakout:>+8.1f}  {info.label}{flag}"
+                f"{p.week_points:>7.1f} {getattr(info, 'heat', 0.0):>6.1f} "
+                f"{getattr(info, 'breakout', 0.0):>+8.1f}  "
+                f"{getattr(info, 'label', '-')}{flag}"
             )
         lines.append("")
 
