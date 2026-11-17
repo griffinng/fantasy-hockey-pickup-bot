@@ -413,7 +413,7 @@ def format_advice(advice: Advice) -> str:
         lines.append(
             f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'PL':>3} {'LT':>3} "
             f"{'ROLE':<9} {'SCORED':>7} {'PROJ+':>7} {'TOTAL':>7} "
-            f"{'KEEP/GM':>8} {'L14':>6}  NOTE"
+            f"{'KEEP/GM':>8} {'L14':>6} {'FORM':>6}  NOTE"
         )
         for entry in advice.roster:
             p = entry.projection
@@ -424,7 +424,8 @@ def format_advice(advice: Advice) -> str:
                 f"{role_label(p):<9} {p.points_so_far:>7.1f} "
                 f"{p.week_points:>7.1f} {p.week_total:>7.1f} "
                 f"{entry.keep_value:>8.2f} "
-                f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f}  {p.why[:26]}"
+                f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f} "
+                f"{getattr(p, 'form_delta', 0.0):>+6.1f}  {p.why[:22]}"
             )
         lines.append("")
 

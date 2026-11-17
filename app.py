@@ -381,6 +381,8 @@ with tab_team:
                     "Scored": round(p.points_so_far, 1),
                     "Proj +": round(p.week_points, 1),
                     "Week total": round(p.week_total, 1),
+                    "L14 FP/Gm": getattr(p, "recent_fp_per_game", 0.0),
+                    "Form": getattr(p, "form_delta", 0.0),
                     "Keep/Gm": round(entry.keep_value, 1),
                     "Drop score": round(entry.drop_score, 1),
                     "Role": advisor.role_label(p),
@@ -424,6 +426,20 @@ with tab_team:
                     "Week total",
                     help="Scored plus projected — where the week should finish.",
                     format="%.1f",
+                ),
+                "L14 FP/Gm": st.column_config.NumberColumn(
+                    "L14 FP/Gm",
+                    help="Fantasy points per game actually scored over the last "
+                         "14 days (30 for goalies, who start far less often).",
+                    format="%.1f",
+                ),
+                "Form": st.column_config.NumberColumn(
+                    "Form",
+                    help="Recent pace minus season pace. Negative = cold. The "
+                         "model weights this lightly on purpose — cold players "
+                         "beat their projections more often than hot ones — but "
+                         "it is here so you can overrule it.",
+                    format="%+.1f",
                 ),
             },
         )
