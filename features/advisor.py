@@ -344,7 +344,11 @@ def build_advice(
     if progress:
         print("Scanning for hot streaks...")
     scan = [p for p in pool[:200] if not getattr(p, "is_goalie", False)]
-    streak_info = streaks_mod.streaks_for([p.nhl_id for p in scan], progress=progress)
+    streak_info = streaks_mod.streaks_for(
+        [p.nhl_id for p in scan],
+        progress=progress,
+        positions={p.nhl_id: p.position for p in scan},
+    )
     hot = [
         p for p in scan
         if streak_info.get(p.nhl_id, streaks_mod.StreakInfo(0)).is_hot
@@ -495,16 +499,18 @@ def format_advice(advice: Advice) -> str:
         lines.append("-" * 96)
         lines.append(
             f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'WEEK':>7} "
-            f"{'L5':>6}  STREAK"
+            f"{'HEAT':>6} {'VS SELF':>8}  STREAK"
         )
         for p in advice.hot_candidates[:12]:
             info = advice.streaks.get(p.nhl_id)
             if not info:
                 continue
+            flag = " (cooling)" if info.cooling else ""
             lines.append(
                 f"{p.name:<24} {p.team:<4} "
                 f"{names.display_position(p.position):<4} {p.games_left:>3} "
-                f"{p.week_points:>7.1f} {info.last5_fp:>6.1f}  {info.label}"
+                f"{p.week_points:>7.1f} {info.heat:>6.1f} "
+                f"{info.breakout:>+8.1f}  {info.label}{flag}"
             )
         lines.append("")
 

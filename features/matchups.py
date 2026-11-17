@@ -211,6 +211,7 @@ def remaining_games(
     team: str,
     today: _dt.date | None = None,
     include_today: bool = True,
+    exclude_finished: bool = True,
 ) -> list[Game]:
     """
     Games left in the current fantasy week. This is the number that drives the
@@ -224,7 +225,12 @@ def remaining_games(
     today = today or _dt.date.today()
     _, week_end = fantasy_week_bounds(today)
     start = today if include_today else today + _dt.timedelta(days=1)
-    return [g for g in team_games(team, start, week_end) if not g.is_finished]
+    games = team_games(team, start, week_end)
+    if not exclude_finished:
+        # The backtest replays past weeks, where every game is finished by
+        # definition. Filtering those out would leave every projection at zero.
+        return games
+    return [g for g in games if not g.is_finished]
 
 
 def played_games(team: str, today: _dt.date | None = None) -> list[Game]:

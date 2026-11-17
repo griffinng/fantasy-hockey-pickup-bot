@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import data.nhl_stats_rest as nhl_rest  # noqa: E402
 import features.matchups as matchups  # noqa: E402
 import features.projection as projection  # noqa: E402
+import features.streaks as streaks_mod  # noqa: E402
 from features.roles import PlayerRole  # noqa: E402
 from features.scoring import skater_fantasy_points  # noqa: E402
 
@@ -245,6 +246,15 @@ def model_scores(
     profiles = matchups.build_opponent_profiles()
     team_pp = nhl_rest.team_powerplay_season()
 
+    # Streak state as it stood on `as_of`. Only computed when the bonus is
+    # switched on, since it costs a game-log fetch per player on a cold cache.
+    streak_info: dict = {}
+    if float((weights.get("streaks") or {}).get("scale", 0.0)) > 0:
+        streak_info = streaks_mod.streaks_for(
+            list(roles), as_of=as_of,
+            positions={pid: r.position for pid, r in roles.items()},
+        )
+
     out: dict[int, float] = {}
     for pid, role in roles.items():
         if role.games_window < 2:
@@ -258,6 +268,7 @@ def model_scores(
         proj = projection.project_player(
             pid, role, rates=rates, profiles=profiles,
             team_pp_seconds=team_pp_seconds, weights=weights, today=as_of,
+            streak=streak_info.get(pid), historical=True,
         )
         out[pid] = proj.week_points
     return out

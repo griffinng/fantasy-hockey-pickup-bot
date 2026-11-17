@@ -315,12 +315,15 @@ with tab_pickups:
             f"erupting right now", expanded=True
         ):
             st.caption(
-                "Sorted by how hard they are going, not by projection. A streak "
-                "is mostly a good player *becoming visible* rather than a player "
-                "improving — before their streaks these guys were averaging 7.5 "
-                "fantasy points a game against 4.2 for everyone else. There is "
-                "also a real but smaller step up afterwards, bigger the more "
-                "violent the streak. See `tests/hot_hand_study.py`."
+                "Sorted by how hard they are going, not by projection. Every "
+                "window is measured from the player's most recent game and "
+                "several lengths are tested (2, 3, 5, 8, 10), so a two-game "
+                "eruption and a hot fortnight both get caught. The bar is "
+                "**position-relative**: par is about 4.9 fantasy points a game "
+                "for a forward and 4.2 for a defenceman, so a D is not held to "
+                "a forward's standard. A streak is mostly a good player "
+                "*becoming visible* rather than one improving — see "
+                "`tests/hot_hand_study.py`."
             )
             hot_rows = []
             for p in advice.hot_candidates:
@@ -332,9 +335,9 @@ with tab_pickups:
                     "Tm": p.team,
                     "Pos": names.display_position(p.position),
                     "Heat": info.heat,
-                    "L5 FP/Gm": info.last5_fp,
-                    "Best game": info.best_game,
+                    "vs Self": info.breakout,
                     "Streak": info.label,
+                    "Cooling": "yes" if info.cooling else "",
                     "GP": p.games_left,
                     "Proj week": round(p.week_points, 1),
                     "Role": advisor.role_label(p),
@@ -351,10 +354,19 @@ with tab_pickups:
                              "streak grows with its intensity.",
                         format="%.1f", min_value=0, max_value=20,
                     ),
-                    "Best game": st.column_config.NumberColumn(
-                        "Best game",
-                        help="Highest single-game fantasy total in the last 10",
-                        format="%.1f",
+                    "vs Self": st.column_config.NumberColumn(
+                        "vs Self",
+                        help="How far above his OWN season pace he is running. "
+                             "High here means a genuine breakout rather than a "
+                             "good player having a normal good week.",
+                        format="%+.1f",
+                    ),
+                    "Cooling": st.column_config.TextColumn(
+                        "Cooling",
+                        help="The streak is in the window but his most recent "
+                             "game was below positional par — it may already be "
+                             "over.",
+                        width="small",
                     ),
                 },
             )

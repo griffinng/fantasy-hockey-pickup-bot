@@ -384,6 +384,7 @@ class PlayerProjection:
     # the two makes a number nobody can act on.
     points_so_far: float = 0.0
     games_played_this_week: int = 0
+    streak_bonus: float = 0.0
 
     @property
     def week_total(self) -> float:
@@ -465,8 +466,16 @@ def project_player(
     team_pp_seconds: float,
     weights: dict,
     today: _dt.date | None = None,
+    streak: object | None = None,
+    historical: bool = False,
 ) -> PlayerProjection:
-    """Project one skater for the remainder of the fantasy week."""
+    """
+    Project one skater for the remainder of the fantasy week.
+
+    `historical=True` is for the backtest, which replays past weeks where
+    every game has already been played; without it the finished-game filter
+    would leave nothing to project.
+    """
     es_toi, pp_toi = expected_ice_time(role, weights, team_pp_seconds)
     play_prob = availability_prob(role, weights)
 
@@ -481,9 +490,17 @@ def project_player(
         rates=rates,
     )
 
-    games = matchups.remaining_games(role.team, today) if role.team else []
+    games = (
+        matchups.remaining_games(role.team, today, exclude_finished=not historical)
+        if role.team else []
+    )
     es_hours = es_toi / _SECONDS_PER_HOUR
     pp_hours = pp_toi / _SECONDS_PER_HOUR
+
+    # Hot-streak bonus. Zero unless streaks.scale is raised in weights.yaml.
+    from features.streaks import streak_bonus as _streak_bonus
+    bonus = _streak_bonus(streak, weights)
+    proj.streak_bonus = round(bonus, 2)
 
     total = 0.0
     for game in games:
@@ -510,7 +527,10 @@ def project_player(
             + rates.pp_shots_per60 * shot_m
         ) * pp_hours
 
-        expected = (nonpp_points + pp_points) * sit * play_prob
+        expected = (nonpp_points + pp_points) * sit
+        if bonus:
+            expected += bonus
+        expected *= play_prob
         total += expected
         proj.games.append(
             GameProjection(

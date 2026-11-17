@@ -134,3 +134,36 @@ goalies:
   # How much team and opponent strength move the win probability.
   win_prob_strength_weight: 0.18
   shutout_base_prob: 0.075
+
+# --- Hot streaks -----------------------------------------------------------
+# Extra expected points per game for a player on a run, shaped from
+# tests/hot_hand_study.py. That study compared the 10 games before a streak
+# against the 10 after (streak excluded from both, control group for drift):
+#
+#     3 games at  6+ FP   N=119   +0.25 over control
+#     3 games at  8+ FP   N= 44   +0.38
+#     3 games at 10+ FP   N= 20   +0.99
+#     4 games at  8+ FP   N= 15   +1.87
+#
+# Real, and it scales with intensity. But whether it belongs in the PROJECTION
+# is a separate question from whether it is real, and the backtest answered it:
+#
+#     scale    top-20    rank corr
+#      0.00     33.56      0.581     <- best on both
+#      0.25     33.17      0.578
+#      0.50     33.44      0.574
+#      1.00     33.30      0.568
+#
+# Folding streaks into the projection makes it no better and ranks slightly
+# worse. That fits the study's own finding: the dominant effect was
+# IDENTIFICATION, not prediction -- hot players were already good, and the
+# model already knows they are good from their season rates and their role.
+# The extra +0.38 is too small to survive the noise it brings with it.
+#
+# So the streak signal lives in the "Running hot" list, where it does its real
+# job of pointing you at players worth a look, and stays out of the
+# projection, which is better off without it. Raising `scale` turns it on;
+# re-run `python -m tests.backtest` if you do.
+streaks:
+  scale: 0.0
+  max_bonus: 2.5               # ceiling, points per game
