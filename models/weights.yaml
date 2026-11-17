@@ -1,0 +1,99 @@
+# Projection model coefficients.
+#
+# Everything tunable lives here so you can adjust the model's behaviour without
+# touching code. After editing, re-run the backtest to check you actually
+# improved things:  python -m tests.backtest
+#
+# ---------------------------------------------------------------------------
+
+# How much recent history to measure "current role" over. Two weeks is roughly
+# 6-8 games: long enough to be stable, short enough to catch a promotion.
+window_days: 14
+
+# --- Rate estimation -------------------------------------------------------
+# A player's scoring rate is a weighted blend of three estimates. The weights
+# are in *hours of ice time*, which makes them self-balancing: a player with
+# only 40 minutes in the window automatically leans on his season numbers and
+# the positional prior, while a full-time player leans on his own results.
+rates:
+  # Weight given to the trailing window, as a multiple of TOI actually observed.
+  recent_multiplier: 1.0
+
+  # Season-to-date is discounted, because role changes make old games less
+  # relevant to what happens this week.
+  season_multiplier: 0.45
+
+  # Strength of the positional prior, in hours. Higher = more regression to the
+  # mean for small samples. ~3 hours is about 10 games of a top-six forward.
+  # This is the main guard against a fourth-liner who scored twice on a hot
+  # weekend rocketing to the top of your rankings.
+  prior_hours: 3.0
+
+# --- Expected ice time -----------------------------------------------------
+# What we think he'll play in the *next* game, which is not the same as what
+# he has averaged.
+ice_time:
+  # Blend between measured trailing TOI and the typical TOI for his listed line.
+  # 0 = trust only measured, 1 = trust only the line listing.
+  line_baseline_weight: 0.30
+
+  # When Daily Faceoff shows a role change the measured average is stale by
+  # construction, so we lean much harder on the role baseline.
+  line_baseline_weight_on_change: 0.70
+
+  # Typical even-strength seconds per game by forward line / defence pair.
+  forward_es_baseline:   {1: 930, 2: 840, 3: 720, 4: 570}
+  defence_es_baseline:   {1: 1230, 2: 1080, 3: 870}
+
+  # Typical share of team power-play time by unit. First units take most of it.
+  pp_share_baseline:     {1: 0.68, 2: 0.32}
+
+  # Sanity clamps (seconds per game).
+  max_es_toi: 1680     # 28:00
+  max_pp_toi: 360      # 6:00
+
+# --- Availability ----------------------------------------------------------
+# Probability the player actually appears in a given game.
+availability:
+  healthy: 1.00
+  game_time_decision: 0.50
+  day_to_day: 0.70
+  out: 0.0
+
+  # If Daily Faceoff doesn't list him in a line at all, he is probably a
+  # scratch or in the press box, even when no injury is flagged.
+  unlisted: 0.45
+
+  # Daily Faceoff listings older than this are treated with suspicion.
+  stale_listing_hours: 48
+  stale_listing_penalty: 0.95
+
+# --- Confidence ------------------------------------------------------------
+# Not used to rank, but shown in the UI so you know how much to trust a number.
+confidence:
+  full_sample_games: 8     # games in the window for full confidence
+  fresh_listing_hours: 24
+
+# --- Goalies ---------------------------------------------------------------
+goalies:
+  # Probability the listed starter actually starts, and the backup's share.
+  starter_start_prob: 0.72
+  backup_start_prob: 0.28
+
+  # A starter is much less likely to go on the second night of a back-to-back.
+  back_to_back_starter_prob: 0.35
+
+  # League-average shots faced per start, used when a goalie has little data.
+  league_shots_per_start: 29.0
+
+  # Regression strength for save percentage, in shots faced. Goalie save
+  # percentage is notoriously noisy over small samples -- 400 shots is roughly
+  # 14 starts and still not really enough.
+  save_pct_prior_shots: 400.0
+  league_save_pct: 0.903
+
+  # Chance of a win, before adjusting for opponent.
+  base_win_prob: 0.50
+  # How much team and opponent strength move the win probability.
+  win_prob_strength_weight: 0.18
+  shutout_base_prob: 0.075

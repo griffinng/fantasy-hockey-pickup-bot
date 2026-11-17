@@ -1,0 +1,9 @@
+streamlit>=1.67
+pandas>=2.0
+plotly>=6.0
+requests>=2.31
+python-dotenv>=1.0
+PyYAML>=6.0
+
+# Only needed if/when Yahoo restores API access for this app.
+yfpy>=10.5.0

@@ -1,0 +1,27 @@
+.env
+token.json
+yahoo_oauth2.json
+private.json
+*.db
+__pycache__/
+.streamlit/
+.DS_Store
+.venv/
+venv/
+# Your roster and league's free-agent list -- personal, not secret, but there
+# is no reason to commit them.
+data/my_team.txt
+data/free_agents.txt
+data/name_overrides.json
+reports/
+
+# Personal working notes: local absolute paths and identifying details.
+docs/yahoo_api_application.md
+
+# Deliberately not published. A local permission rule blocks reading .env files,
+# so this file's contents could not be verified before making the repo public.
+# The variables it documents are listed in the README instead.
+.env.example
+
+# Written by scripts/verify_auth.py; contains your league key.
+scripts/_league.json
