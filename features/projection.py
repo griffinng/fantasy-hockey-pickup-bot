@@ -368,6 +368,14 @@ class PlayerProjection:
     rates: RateSplit | None = None
     confidence: float = 0.0
     why: str = ""
+    # Per-game value with the schedule stripped out. Lives on the projection so
+    # that skaters and goalies, which are modelled completely differently, can
+    # still be compared on a single number when deciding who to drop.
+    keep_per_game: float = 0.0
+
+    @property
+    def is_goalie(self) -> bool:
+        return False
 
     @property
     def games_left(self) -> int:
@@ -490,6 +498,11 @@ def project_player(
 
     proj.week_points = round(total, 2)
     proj.per_game_points = round(total / len(games), 2) if games else 0.0
+    # Neutral-night value: rate x expected minutes, with no schedule or matchup
+    # in it. This is the number that should drive a drop decision.
+    proj.keep_per_game = round(
+        rates.nonpp_per60 * es_hours + rates.pp_per60 * pp_hours, 2
+    )
     proj.confidence = _confidence(role, rates, weights)
     proj.why = _explain(proj, role, profiles)
     return proj

@@ -94,6 +94,9 @@ class DfoPlayer:
     game_time_decision: bool
     as_of: str               # ISO timestamp DFO last updated the page
     source: str              # DFO's cited beat-reporter source
+    # Depth on the goalie chart: 1 = projected starter, 2 = backup. Daily
+    # Faceoff encodes this in the position field as 'g1'/'g2'.
+    goalie_rank: int | None = None
 
     @property
     def is_forward(self) -> bool:
@@ -150,6 +153,19 @@ def _clean_position(value: str | None) -> str:
 def _is_goalie_row(position: str | None, group: str | None) -> bool:
     pos = (position or "").lower()
     return pos.startswith("g") or (group or "").lower() == "g"
+
+
+def _goalie_rank(position: str | None, group: str | None) -> int | None:
+    """
+    'g1' -> 1 (projected starter), 'g2' -> 2 (backup).
+
+    Depth order is the single most important input to a goalie projection:
+    a starter is worth roughly two and a half times a backup purely because
+    of how often he plays, before any question of how good he is.
+    """
+    if not _is_goalie_row(position, group):
+        return None
+    return _trailing_int((position or "").lower())
 
 
 def _fetch_team_payload(slug: str) -> dict | None:
@@ -223,6 +239,7 @@ def team_lines(team: str) -> list[DfoPlayer]:
                 game_time_decision=bool(row.get("gameTimeDecision")),
                 as_of=as_of,
                 source=source,
+                goalie_rank=_goalie_rank(raw_position, group),
             )
         else:
             # Fill in whichever group this row represents.

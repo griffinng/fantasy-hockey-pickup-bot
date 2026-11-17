@@ -28,6 +28,7 @@ import data.http as http
 import data.my_team as my_team
 import data.nhl_stats_rest as nhl_rest
 import features.advisor as advisor
+import features.goalies as goalies
 import features.matchups as matchups
 import features.projection as projection
 
@@ -57,10 +58,27 @@ def refresh() -> None:
 # Presentation helpers
 # ---------------------------------------------------------------------------
 
-def role_badge(proj: projection.PlayerProjection) -> str:
-    if proj.role.role_change == "promoted":
+class _NullRole:
+    """Stand-in so goalie projections, which carry no role record, render."""
+    line_rank = None
+    pp_unit = None
+    pp_share = 0.0
+    role_change = ""
+    role_note = ""
+    injury_status = ""
+    game_time_decision = False
+    is_playable = True
+
+
+def _role(proj):
+    return getattr(proj, "role", None) or _NullRole()
+
+
+def role_badge(proj) -> str:
+    change = _role(proj).role_change
+    if change == "promoted":
         return "PROMOTED"
-    if proj.role.role_change == "demoted":
+    if change == "demoted":
         return "slipping"
     return ""
 
@@ -75,12 +93,9 @@ def projections_to_frame(projs: list[projection.PlayerProjection]) -> pd.DataFra
                 "Pos": (p.position or "").upper(),
                 "Week Pts": round(p.week_points, 1),
                 "GP": p.games_left,
-                "Line": (
-                    ("D" if advisor.position_group(p.position) == "D" else "L")
-                    + str(p.role.line_rank)
-                ) if p.role.line_rank else "-",
-                "PP": f"PP{p.role.pp_unit}" if p.role.pp_unit else "-",
-                "PP%": round(p.role.pp_share * 100),
+                "Line": advisor.role_label(p),
+                "PP": f"PP{_role(p).pp_unit}" if getattr(_role(p), "pp_unit", None) else "-",
+                "PP%": round(getattr(_role(p), "pp_share", 0.0) * 100),
                 "ES TOI": nhl_rest.seconds_to_mmss(p.es_toi),
                 "PP TOI": nhl_rest.seconds_to_mmss(p.pp_toi),
                 "Pts/Gm": round(p.per_game_points, 1),
@@ -229,9 +244,9 @@ def apply_filters(
     if min_games:
         out = [p for p in out if p.games_left >= min_games]
     if only_promoted:
-        out = [p for p in out if p.role.role_change == "promoted"]
+        out = [p for p in out if _role(p).role_change == "promoted"]
     if hide_injured:
-        out = [p for p in out if p.role.is_playable]
+        out = [p for p in out if _role(p).is_playable]
     return out
 
 
@@ -247,7 +262,7 @@ tab_pickups, tab_team, tab_moves, tab_detail = st.tabs(
 with tab_pickups:
     candidates = apply_filters(advice.candidates)
 
-    promoted = [p for p in candidates if p.role.role_change == "promoted"]
+    promoted = [p for p in candidates if _role(p).role_change == "promoted"]
     if promoted:
         st.subheader("Role changes worth acting on")
         st.caption(
@@ -261,9 +276,9 @@ with tab_pickups:
                 st.metric(
                     p.name,
                     f"{p.week_points:.1f} pts",
-                    f"{p.role.role_label}, {p.games_left} games",
+                    f"{advisor.role_label(p)}, {p.games_left} games",
                 )
-                st.caption(p.role.role_note)
+                st.caption(_role(p).role_note)
         st.divider()
 
     st.subheader(f"Ranked candidates ({len(candidates)})")
@@ -285,6 +300,23 @@ with tab_pickups:
 # ---------------------------------------------------------------------------
 
 with tab_team:
+    if advice.goalie_minimum_at_risk:
+        st.error(
+            f"**Goalie appearance minimum at risk.** Your goalies project to "
+            f"**{advice.expected_goalie_appearances:.1f}** appearances this "
+            f"week against a minimum of "
+            f"**{config.MIN_GOALIE_STARTS_PER_WEEK}**. Falling short voids "
+            f"*all* your goaltending points for the week, not just the "
+            f"difference.",
+            icon="🥅",
+        )
+    elif any(getattr(e.projection, "is_goalie", False) for e in advice.roster):
+        st.caption(
+            f"Goalie appearances projected: "
+            f"**{advice.expected_goalie_appearances:.1f}** "
+            f"(minimum {config.MIN_GOALIE_STARTS_PER_WEEK}) ✓"
+        )
+
     if advice.unscored_roster:
         st.warning(
             "**On your roster but not scored** — excluded from the drop "
@@ -318,9 +350,9 @@ with tab_team:
                     "Keep/Gm": round(entry.keep_value, 1),
                     "Drop score": round(entry.drop_score, 1),
                     "GP": p.games_left,
-                    "Role": p.role.role_label,
-                    "Status": p.role.injury_status or (
-                        "GTD" if p.role.game_time_decision else ""
+                    "Role": advisor.role_label(p),
+                    "Status": getattr(_role(p), "injury_status", "") or (
+                        "GTD" if getattr(_role(p), "game_time_decision", False) else ""
                     ),
                     "Why": p.why,
                 }
@@ -362,7 +394,7 @@ with tab_moves:
                     st.markdown(f"**ADD** {move.add.name}")
                     st.caption(
                         f"{move.add.team} · {(move.add.position or '').upper()} · "
-                        f"{move.add.role.role_label} · {move.add.games_left} games"
+                        f"{advisor.role_label(move.add)} · {move.add.games_left} games"
                     )
                     st.caption(move.add.why)
                 with mid:
@@ -370,7 +402,7 @@ with tab_moves:
                     st.caption(
                         f"{move.drop.projection.team} · "
                         f"{(move.drop.projection.position or '').upper()} · "
-                        f"{move.drop.projection.role.role_label} · "
+                        f"{advisor.role_label(move.drop.projection)} · "
                         f"{move.drop.projection.games_left} games"
                     )
                     st.caption(move.drop.projection.why)
@@ -398,7 +430,10 @@ with tab_detail:
         chosen = st.selectbox("Player", sorted(pool))
         if chosen:
             proj = pool[chosen]
-            st.code(projection.explain_player(proj), language="text")
+            if getattr(proj, "is_goalie", False):
+                st.code(goalies.explain_goalie(proj), language="text")
+            else:
+                st.code(projection.explain_player(proj), language="text")
 
             if proj.games:
                 st.bar_chart(

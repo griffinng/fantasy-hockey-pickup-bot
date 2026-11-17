@@ -29,6 +29,7 @@ import config
 import data.my_team as my_team
 import data.names as names
 import data.nhl_stats_rest as nhl_rest
+import features.goalies as goalies
 import features.projection as projection
 from features.projection import PlayerProjection
 
@@ -52,6 +53,28 @@ POSITION_GROUP = {
 
 def position_group(position: str) -> str:
     return POSITION_GROUP.get((position or "").lower(), "F")
+
+
+def _role_change(proj) -> str:
+    """Role-change flag, or empty for projections that have no role record."""
+    role = getattr(proj, "role", None)
+    return getattr(role, "role_change", "") if role is not None else ""
+
+
+def role_label(proj) -> str:
+    """
+    Display role for either kind of projection. Goalies have no line or
+    power-play unit, so they carry a depth-chart label instead.
+    """
+    if getattr(proj, "is_goalie", False):
+        depth = getattr(proj, "depth", None)
+        if depth == 1:
+            return "G1"
+        if depth:
+            return f"G{depth}"
+        return "G"
+    role = getattr(proj, "role", None)
+    return role.role_label if role is not None else "-"
 
 
 @dataclasses.dataclass
@@ -87,18 +110,16 @@ class Move:
         return bool(self.warning)
 
 
-def keep_value(proj: PlayerProjection) -> float:
+def keep_value(proj) -> float:
     """
     Per-game value with the schedule removed -- what this player is worth on a
     neutral night. This is the number that should drive a drop, because the
     schedule resets every week but the player does not.
+
+    Both skater and goalie projections compute this at projection time, since
+    the two are built from entirely different quantities.
     """
-    rates = proj.rates
-    if rates is None:
-        return 0.0
-    es_hours = proj.es_toi / 3600.0
-    pp_hours = proj.pp_toi / 3600.0
-    return round(rates.nonpp_per60 * es_hours + rates.pp_per60 * pp_hours, 2)
+    return float(getattr(proj, "keep_per_game", 0.0) or 0.0)
 
 
 def build_roster_view(
@@ -215,7 +236,7 @@ def suggest_moves(
                 f"week and lose the rest of the season. Only do this if you need "
                 f"the points now."
             )
-        elif target.projection.role.role_change == "promoted":
+        elif _role_change(target.projection) == "promoted":
             warning = (
                 f"{target.name} was just promoted ({target.projection.role.role_note}) "
                 f"-- his numbers may be about to rise."
@@ -247,6 +268,8 @@ class Advice:
     free_agents_known: bool
     unscored_roster: list[str] = dataclasses.field(default_factory=list)
     moves_remaining: int = 0
+    expected_goalie_appearances: float = 0.0
+    goalie_minimum_at_risk: bool = False
 
 
 def build_advice(
@@ -256,11 +279,25 @@ def build_advice(
     max_candidates: int = 60,
 ) -> Advice:
     """Load roster + free agents, project everyone, and pair them up."""
-    projections = projection.project_all(today=today, progress=progress)
+    projections: dict = dict(projection.project_all(today=today, progress=progress))
     index = build_index()
 
     roster_refs = my_team.load_roster(index)
     fa_refs = my_team.load_free_agents(index)
+
+    # Goalies are modelled separately and merged in, so that everything
+    # downstream -- roster view, drop ranking, move suggestions -- sees one
+    # combined pool rather than silently ignoring a third of your lineup.
+    if progress:
+        print("Projecting goalies...")
+    goalie_ids = {
+        r.nhl_id for r in (roster_refs + fa_refs)
+        if r.nhl_id and (r.position or "") == "g"
+    }
+    goalie_projections = goalies.project_goalies(
+        goalie_ids or None, today=today
+    )
+    projections.update(goalie_projections)
 
     roster_ids = [r.nhl_id for r in roster_refs if r.nhl_id]
     unresolved = [r.raw for r in roster_refs if not r.nhl_id]
@@ -284,6 +321,15 @@ def build_advice(
         0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
     )
     moves = suggest_moves(roster, candidates, max_moves=remaining)
+
+    roster_goalies = [
+        e.projection for e in roster
+        if getattr(e.projection, "is_goalie", False)
+    ]
+    expected_app, at_risk = goalies.appearance_shortfall(
+        roster_goalies, config.MIN_GOALIE_STARTS_PER_WEEK
+    )
+
     return Advice(
         roster=roster,
         candidates=candidates,
@@ -292,6 +338,8 @@ def build_advice(
         unscored_roster=unscored,
         free_agents_known=free_agents_known,
         moves_remaining=remaining,
+        expected_goalie_appearances=expected_app,
+        goalie_minimum_at_risk=at_risk,
     )
 
 
@@ -303,6 +351,24 @@ def format_advice(advice: Advice) -> str:
         lines.append("COULD NOT IDENTIFY THESE ROSTER ENTRIES:")
         for raw in advice.unresolved_roster:
             lines.append(f"   ? {raw}")
+        lines.append("")
+
+    if advice.goalie_minimum_at_risk:
+        lines.append("!" * 96)
+        lines.append(
+            f"GOALIE APPEARANCE MINIMUM AT RISK: your goalies project to "
+            f"{advice.expected_goalie_appearances:.1f} appearance(s) this week, "
+            f"against a league minimum of {config.MIN_GOALIE_STARTS_PER_WEEK}."
+        )
+        lines.append(
+            "Falling short voids ALL of your goaltending points for the week, "
+            "not just the difference."
+        )
+        lines.append(
+            "Start a goalie playing on a day you have none, or stream one from "
+            "the waiver wire."
+        )
+        lines.append("!" * 96)
         lines.append("")
 
     if advice.unscored_roster:
@@ -331,7 +397,7 @@ def format_advice(advice: Advice) -> str:
             note = p.why[:46]
             lines.append(
                 f"{p.name:<24} {p.team:<4} {p.position.upper():<4} {p.games_left:>3} "
-                f"{p.role.role_label:<9} {p.week_points:>7.2f} "
+                f"{role_label(p):<9} {p.week_points:>7.2f} "
                 f"{entry.keep_value:>8.2f}  {note}"
             )
         lines.append("")
@@ -351,10 +417,10 @@ def format_advice(advice: Advice) -> str:
         f"{'WEEK':>7} {'CONF':>5}  WHY"
     )
     for p in advice.candidates[:20]:
-        flag = "*" if p.role.role_change == "promoted" else " "
+        flag = "*" if _role_change(p) == "promoted" else " "
         lines.append(
             f"{flag}{p.name:<23} {p.team:<4} {p.position.upper():<4} {p.games_left:>3} "
-            f"{p.role.role_label:<9} {p.week_points:>7.2f} {p.confidence:>5.0%}  "
+            f"{role_label(p):<9} {p.week_points:>7.2f} {p.confidence:>5.0%}  "
             f"{p.why[:52]}"
         )
     lines.append("")
@@ -372,7 +438,7 @@ def format_advice(advice: Advice) -> str:
     for i, move in enumerate(advice.moves, 1):
         lines.append(
             f"{i}. ADD  {move.add.name} ({move.add.team}, "
-            f"{move.add.position.upper()}, {move.add.role.role_label}, "
+            f"{move.add.position.upper()}, {role_label(move.add)}, "
             f"{move.add.games_left} games) -- {move.add.week_points:.1f} pts"
         )
         lines.append(
