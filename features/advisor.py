@@ -61,6 +61,7 @@ class RosterEntry:
     projection: PlayerProjection
     keep_value: float = 0.0        # schedule-independent, points per game
     drop_score: float = 0.0        # lower = more droppable
+    on_ir: bool = False            # occupies an IR slot, not an active one
 
     @property
     def name(self) -> str:
@@ -101,16 +102,46 @@ def keep_value(proj: PlayerProjection) -> float:
 
 
 def build_roster_view(
-    roster_ids: list[int],
+    refs: list,
     projections: dict[int, PlayerProjection],
-) -> list[RosterEntry]:
-    """Your roster, scored and sorted from most to least droppable."""
+) -> tuple[list[RosterEntry], list[str]]:
+    """
+    Your roster, scored and sorted from most to least droppable.
+
+    Returns (entries, unscored). Anything we could not project is returned
+    rather than dropped -- a player who silently disappears from your roster
+    view is worse than one shown with a blank score, because you would never
+    know to look for him. Goalies land here today: the model covers skaters
+    only.
+    """
     entries: list[RosterEntry] = []
-    for pid in roster_ids:
-        proj = projections.get(pid)
+    unscored: list[str] = []
+    for ref in refs:
+        pid = getattr(ref, "nhl_id", None)
+        proj = projections.get(pid) if pid else None
         if proj is None:
+            reason = (
+                "goalie -- not yet modelled"
+                if (ref.position or "") == "g"
+                else "no NHL data this season"
+            )
+            unscored.append(f"{ref.name} ({ref.team or '?'}) -- {reason}")
             continue
-        entry = RosterEntry(projection=proj, keep_value=keep_value(proj))
+
+        entry = RosterEntry(
+            projection=proj,
+            keep_value=keep_value(proj),
+            on_ir=bool(getattr(ref, "on_injured_reserve", False)),
+        )
+        # Yahoo's roster status beats the line-combination sites: it is your
+        # league's own record of whether the player can be used at all.
+        if getattr(ref, "is_out", False):
+            proj.week_points = 0.0
+            proj.per_game_points = 0.0
+            for g in proj.games:
+                g.points = 0.0
+            status = (ref.status or "out").upper()
+            proj.why = f"{status} per Yahoo -- cannot play this week"
         # Weekly contribution is already schedule-adjusted; keep_value is per
         # game, so scale it to a comparable weekly figure using a neutral
         # 3-game week before blending.
@@ -121,7 +152,7 @@ def build_roster_view(
         entries.append(entry)
 
     entries.sort(key=lambda e: e.drop_score)
-    return entries
+    return entries, unscored
 
 
 def suggest_moves(
@@ -156,6 +187,11 @@ def suggest_moves(
         target: RosterEntry | None = None
         for entry in droppable:
             if entry.projection.nhl_id in used_drops:
+                continue
+            # A player in an IR slot is not taking up active roster space, so
+            # cutting him frees nothing. Dropping an injured starter to chase a
+            # four-game streamer is how you lose a season in November.
+            if entry.on_ir:
                 continue
             if respect_position and entry.group != cand_group:
                 continue
@@ -209,6 +245,8 @@ class Advice:
     moves: list[Move]
     unresolved_roster: list[str]
     free_agents_known: bool
+    unscored_roster: list[str] = dataclasses.field(default_factory=list)
+    moves_remaining: int = 0
 
 
 def build_advice(
@@ -226,7 +264,7 @@ def build_advice(
 
     roster_ids = [r.nhl_id for r in roster_refs if r.nhl_id]
     unresolved = [r.raw for r in roster_refs if not r.nhl_id]
-    roster = build_roster_view(roster_ids, projections)
+    roster, unscored = build_roster_view(roster_refs, projections)
 
     roster_id_set = set(roster_ids)
     fa_ids = {r.nhl_id for r in fa_refs if r.nhl_id}
@@ -242,13 +280,18 @@ def build_advice(
     pool.sort(key=lambda p: -p.week_points)
     candidates = pool[:max_candidates]
 
-    moves = suggest_moves(roster, candidates)
+    remaining = max(
+        0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
+    )
+    moves = suggest_moves(roster, candidates, max_moves=remaining)
     return Advice(
         roster=roster,
         candidates=candidates,
         moves=moves,
         unresolved_roster=unresolved,
+        unscored_roster=unscored,
         free_agents_known=free_agents_known,
+        moves_remaining=remaining,
     )
 
 
@@ -261,6 +304,15 @@ def format_advice(advice: Advice) -> str:
         for raw in advice.unresolved_roster:
             lines.append(f"   ? {raw}")
         lines.append("")
+
+    if advice.unscored_roster:
+        lines.append("ON YOUR ROSTER BUT NOT SCORED:")
+        for item in advice.unscored_roster:
+            lines.append(f"   - {item}")
+        lines.append(
+            "   These are excluded from the drop ranking below, so judge them "
+            "yourself.\n"
+        )
 
     if not advice.roster:
         lines.append(
@@ -308,10 +360,14 @@ def format_advice(advice: Advice) -> str:
     lines.append("")
 
     lines.append(
-        f"SUGGESTED MOVES (limit {config.MAX_ACQUISITIONS_PER_WEEK} acquisitions/week)"
+        f"SUGGESTED MOVES -- {advice.moves_remaining} add(s) left this week "
+        f"({config.ACQUISITIONS_USED_THIS_WEEK} of "
+        f"{config.MAX_ACQUISITIONS_PER_WEEK} already used)"
     )
     lines.append("-" * 96)
-    if not advice.moves:
+    if advice.moves_remaining <= 0:
+        lines.append("   No acquisitions left this week.")
+    elif not advice.moves:
         lines.append("   No move improves your week. Stand pat.")
     for i, move in enumerate(advice.moves, 1):
         lines.append(

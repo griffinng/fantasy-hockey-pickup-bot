@@ -73,6 +73,18 @@ class PlayerRef:
     team: str | None
     position: str | None
     nhl_id: int | None = None
+    status: str | None = None     # Yahoo roster status: ir, ir+, o, out, dtd
+
+    @property
+    def is_out(self) -> bool:
+        return (self.status or "").strip().lower() in (
+            "ir", "ir+", "ir-", "o", "out", "na"
+        )
+
+    @property
+    def on_injured_reserve(self) -> bool:
+        """IR/IR+ players sit in a separate slot and cost you no active space."""
+        return (self.status or "").strip().lower() in ("ir", "ir+", "ir-")
 
 
 def _parse_line(line: str) -> PlayerRef | None:
@@ -86,7 +98,13 @@ def _parse_line(line: str) -> PlayerRef | None:
     name = parts[0]
     team = parts[1].upper() if len(parts) > 1 else None
     position = parts[2].lower() if len(parts) > 2 else None
-    return PlayerRef(raw=text, name=name, team=team, position=position)
+    # Optional 4th field: a status straight from Yahoo (IR, IR+, O, OUT, DTD).
+    # Yahoo is the authority for your league -- it knows things the public
+    # line-combination sites lag on, and when they disagree Yahoo wins.
+    status = parts[3].lower() if len(parts) > 3 else None
+    return PlayerRef(
+        raw=text, name=name, team=team, position=position, status=status
+    )
 
 
 def _read_file(path: Path, template: str) -> list[PlayerRef]:

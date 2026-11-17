@@ -285,6 +285,14 @@ with tab_pickups:
 # ---------------------------------------------------------------------------
 
 with tab_team:
+    if advice.unscored_roster:
+        st.warning(
+            "**On your roster but not scored** — excluded from the drop "
+            "ranking below, so judge these yourself:\n\n"
+            + "\n".join(f"- {item}" for item in advice.unscored_roster),
+            icon="⚠️",
+        )
+
     if not advice.roster:
         st.warning(
             "No roster loaded. Paste your players into the sidebar to get drop "
@@ -335,8 +343,11 @@ with tab_team:
 with tab_moves:
     st.subheader("Suggested add / drop pairs")
     st.caption(
-        f"Your league allows {config.MAX_ACQUISITIONS_PER_WEEK} acquisitions "
-        f"per week. These are ordered by how much they improve this week."
+        f"**{advice.moves_remaining} add(s) left this week** "
+        f"({config.ACQUISITIONS_USED_THIS_WEEK} of "
+        f"{config.MAX_ACQUISITIONS_PER_WEEK} used). Keep "
+        f"`ACQUISITIONS_USED_THIS_WEEK` in `config.py` current, or this will "
+        f"suggest more moves than your league allows."
     )
 
     if not advice.roster:
