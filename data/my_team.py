@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import re
 from pathlib import Path
 
 import data.names as names
@@ -75,6 +76,12 @@ class PlayerRef:
     position: str | None
     nhl_id: int | None = None
     status: str | None = None     # Yahoo roster status: ir, ir+, o, out, dtd
+    slot: str | None = None       # Yahoo slot right now: C, LW, D, BN, IR+ ...
+
+    @property
+    def is_starting(self) -> bool:
+        """In an active slot, as opposed to bench or injured reserve."""
+        return bool(self.slot) and self.slot.upper() not in ("BN", "IR", "IR+", "IR-", "NA")
 
     @property
     def eligible(self) -> list[str]:
@@ -110,9 +117,17 @@ def _parse_line(line: str) -> PlayerRef | None:
     text = line.strip()
     if not text or text.startswith("#"):
         return None
-    # Trailing comments, so a line can carry a note (the Yahoo slot, say)
-    # without the parser swallowing it as part of the position.
-    text = text.split("#", 1)[0].strip()
+    # Trailing comments, so a line can carry a note without the parser
+    # swallowing it as part of the position. One note is meaningful: the
+    # Yahoo slot the player currently occupies ("# slot: LW"), which is what
+    # the daily lineup check compares against.
+    text, _, comment = text.partition("#")
+    text = text.strip()
+    slot = None
+    if comment:
+        m = re.search(r"slot\s*:\s*([A-Za-z+]+)", comment)
+        if m:
+            slot = m.group(1).strip().upper()
     if not text:
         return None
     # Accept commas or pipes as separators
@@ -127,7 +142,8 @@ def _parse_line(line: str) -> PlayerRef | None:
     # line-combination sites lag on, and when they disagree Yahoo wins.
     status = parts[3].lower() if len(parts) > 3 else None
     return PlayerRef(
-        raw=text, name=name, team=team, position=position, status=status
+        raw=text, name=name, team=team, position=position, status=status,
+        slot=slot,
     )
 
 

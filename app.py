@@ -300,8 +300,8 @@ def apply_filters(
     return out
 
 
-tab_pickups, tab_team, tab_moves, tab_detail = st.tabs(
-    ["Pickups", "My Team", "Moves", "Player detail"]
+tab_pickups, tab_today, tab_team, tab_moves, tab_detail = st.tabs(
+    ["Pickups", "Today's lineup", "My Team", "Moves", "Player detail"]
 )
 
 
@@ -520,6 +520,57 @@ with tab_pickups:
                 icon="✅",
             )
 
+
+
+with tab_today:
+    checks = getattr(advice, "week_checks", []) or []
+    if not checks:
+        st.warning(
+            "No lineup slots found. Add a `# slot: C` style note to each line "
+            "in your roster file (the sidebar) so the bot knows who you are "
+            "currently starting."
+        )
+    else:
+        total_gain = sum(c.gain for c in checks)
+        c1, c2 = st.columns(2)
+        c1.metric("Points available from lineup changes", f"{total_gain:+.1f}")
+        c2.metric(
+            "Today",
+            f"{checks[0].gain:+.1f}" if not checks[0].no_games else "no games",
+        )
+        st.caption(
+            "**Free** moves displace a player whose team is idle today — a "
+            "guaranteed zero swapped for a real number, so there is no "
+            "judgement involved. **Judgement** moves are projection "
+            "differences between two players who are both playing, and "
+            "projections are wrong all the time."
+        )
+
+        for c in checks:
+            if c.no_games:
+                st.markdown(f"**{c.date:%A %d %b}** — no NHL games.")
+                continue
+            header = (
+                f"**{c.date:%A %d %b}** — {c.current_points:.1f} → "
+                f"{c.optimal_points:.1f} pts ({c.gain:+.1f})"
+            )
+            with st.container(border=True):
+                st.markdown(header)
+                if not c.moves:
+                    st.caption("Lineup is already optimal for this day.")
+                for m in c.moves:
+                    icon = "✅" if m.free else "🤔"
+                    label = "free" if m.free else "judgement call"
+                    st.markdown(
+                        f"{icon} **{m.slot.upper()}** — start **{m.start}**, "
+                        f"sit **{m.sit}** &nbsp; `{m.gain:+.1f}` *({label})*"
+                    )
+                    st.caption(m.note)
+                if c.idle_starters:
+                    st.caption(
+                        f"Idle in your lineup with no replacement available: "
+                        f"{', '.join(c.idle_starters)}"
+                    )
 
 
 with tab_team:

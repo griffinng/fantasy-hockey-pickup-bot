@@ -261,3 +261,191 @@ def coverage_report(
 def league_slots() -> dict[str, int]:
     """Slot structure, overridable in config.py."""
     return dict(getattr(config, "ROSTER_SLOTS", DEFAULT_SLOTS))
+
+
+# ---------------------------------------------------------------------------
+# Daily lineup check
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class LineupMove:
+    """One change worth making to today's lineup."""
+
+    slot: str
+    start: str | None          # player to move in
+    sit: str | None            # player to move out
+    gain: float                # projected points gained
+    free: bool                 # the player coming out is not playing at all
+    note: str = ""
+
+    @property
+    def kind(self) -> str:
+        if self.free:
+            return "free"
+        return "judgement"
+
+
+@dataclasses.dataclass
+class DailyCheck:
+    date: _dt.date
+    current_points: float
+    optimal_points: float
+    moves: list[LineupMove]
+    idle_starters: list[str]       # started, but their team is not playing
+    unused_available: list[str]    # benched, and their team IS playing
+    no_games: bool = False
+
+    @property
+    def gain(self) -> float:
+        return round(self.optimal_points - self.current_points, 2)
+
+    @property
+    def free_moves(self) -> list[LineupMove]:
+        return [m for m in self.moves if m.free]
+
+    @property
+    def judgement_moves(self) -> list[LineupMove]:
+        return [m for m in self.moves if not m.free]
+
+
+def daily_check(
+    roster: list[Candidate],
+    current_slots: dict[int, str],
+    day: _dt.date | None = None,
+    slots: dict[str, int] | None = None,
+) -> DailyCheck:
+    """
+    Compare the lineup as it stands against the best one available today.
+
+    Moves are split into two kinds, because they do not deserve equal
+    confidence:
+
+    **Free.** A player is in an active slot while his team is idle, and someone
+    on your bench is playing. That is not a close call between two
+    projections, it is a guaranteed zero against a real number. Always take it.
+
+    **Judgement.** Both players are playing and the solver prefers one of them.
+    That is a projection difference, and projections are wrong all the time, so
+    it is offered rather than urged.
+
+    A day with no games at all produces nothing to do, which matters: an empty
+    lineup looks alarming and is often simply the league not playing.
+    """
+    day = day or _dt.date.today()
+    slots = slots or DEFAULT_SLOTS
+
+    by_id = {c.nhl_id: c for c in roster}
+    playing_today = [c for c in roster if c.points_on(day) is not None]
+    if not playing_today:
+        return DailyCheck(
+            date=day, current_points=0.0, optimal_points=0.0, moves=[],
+            idle_starters=[], unused_available=[], no_games=True,
+        )
+
+    started_ids = {
+        pid for pid, slot in current_slots.items()
+        if slot and slot.upper() not in ("BN", "IR", "IR+", "IR-", "NA")
+    }
+
+    current_points = round(sum(
+        (by_id[pid].points_on(day) or 0.0)
+        for pid in started_ids if pid in by_id
+    ), 2)
+
+    best = solve_day(roster, day, slots)
+    optimal_names = {
+        name for picks in best.assigned.values() for name, _ in picks
+    }
+
+    idle_starters = [
+        by_id[pid].name for pid in started_ids
+        if pid in by_id and by_id[pid].points_on(day) is None
+    ]
+    unused_available = [
+        c.name for c in playing_today
+        if c.nhl_id not in started_ids and c.name in optimal_names
+    ]
+
+    # Pair players the optimum wants in against players it wants out, WITHIN
+    # the same slot type. Pairing across types produces nonsense like "start
+    # this winger, sit that goalie": the arithmetic still works because the
+    # totals are set-level, but the instruction is unfollowable.
+    def norm(slot: str) -> str:
+        return (slot or "").strip().lower()
+
+    current_by_slot: dict[str, list[str]] = {}
+    for pid, slot in current_slots.items():
+        key = norm(slot)
+        if key in slots and pid in by_id:
+            current_by_slot.setdefault(key, []).append(by_id[pid].name)
+
+    moves: list[LineupMove] = []
+    unpaired_in: list[tuple[str, str, float]] = []
+    unpaired_out: list[tuple[str, str, float | None]] = []
+
+    for slot_type in slots:
+        opt_here = best.assigned.get(slot_type, [])
+        cur_here = current_by_slot.get(slot_type, [])
+        # A player who is starting both before and after has not moved, even
+        # if he shifted between slot types (a LW/RW filling the other wing).
+        ins = [
+            (n, pts) for n, pts in opt_here
+            if _id_for(roster, n) not in started_ids
+        ]
+        outs = [
+            (n, by_id[_id_for(roster, n)].points_on(day) if _id_for(roster, n) in by_id else None)
+            for n in cur_here
+            if n not in optimal_names
+        ]
+        # Displace idle players first: that is where the certain gain is.
+        outs.sort(key=lambda o: (o[1] is not None, o[1] or 0.0))
+        ins.sort(key=lambda i: -i[1])
+
+        for (in_name, in_pts), (out_name, out_pts) in zip(ins, outs):
+            is_free = out_pts is None
+            gain = round(in_pts - (out_pts or 0.0), 2)
+            if gain <= 0 and not is_free:
+                continue        # not an improvement; do not suggest it
+            moves.append(LineupMove(
+                slot=slot_type, start=in_name, sit=out_name,
+                gain=gain, free=is_free,
+                note=(
+                    f"{out_name}'s team is idle today"
+                    if is_free else
+                    f"{in_name} projects {gain:+.1f} over {out_name}"
+                ),
+            ))
+        if len(ins) > len(outs):
+            unpaired_in.extend((slot_type, n, p) for n, p in ins[len(outs):])
+        elif len(outs) > len(ins):
+            unpaired_out.extend((slot_type, n, p) for n, p in outs[len(ins):])
+
+    # Anything the optimum wants started with no one to displace in that slot
+    # is reported on its own rather than forced into a false pairing.
+    for slot_type, name, pts in unpaired_in:
+        moves.append(LineupMove(
+            slot=slot_type, start=name, sit=None, gain=round(pts, 2),
+            free=True, note=f"{slot_type.upper()} slot is empty today",
+        ))
+    # Deliberately NOT emitted as moves: a starter whose team is idle and who
+    # has no eligible replacement on the bench. There is nothing to do about
+    # him, and listing nine such players on a quiet night buries the two real
+    # actions. They are already reported in `idle_starters` as context.
+
+    moves.sort(key=lambda m: (not m.free, -m.gain))
+
+    return DailyCheck(
+        date=day,
+        current_points=current_points,
+        optimal_points=best.total,
+        moves=moves,
+        idle_starters=idle_starters,
+        unused_available=unused_available,
+    )
+
+
+def _id_for(roster: list[Candidate], name: str) -> int | None:
+    for c in roster:
+        if c.name == name:
+            return c.nhl_id
+    return None

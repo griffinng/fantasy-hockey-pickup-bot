@@ -368,6 +368,8 @@ class Advice:
     fits: dict = dataclasses.field(default_factory=dict)
     base_plan: object | None = None
     coverage: list = dataclasses.field(default_factory=list)
+    today_check: object | None = None
+    week_checks: list = dataclasses.field(default_factory=list)
     best_fits: list = dataclasses.field(default_factory=list)
     overall: list = dataclasses.field(default_factory=list)
 
@@ -483,6 +485,20 @@ def build_advice(
             roster_candidates, cand, days, slots, base_plan=base_plan
         )
 
+    # --- today's lineup ---------------------------------------------------
+    current_slots = {
+        r.nhl_id: (r.slot or "")
+        for r in roster_refs if r.nhl_id and r.slot
+    }
+    week_checks = (
+        [
+            lineup.daily_check(roster_candidates, current_slots, d, slots)
+            for d in days
+        ]
+        if current_slots else []
+    )
+    today_check = week_checks[0] if week_checks else None
+
     remaining = max(
         0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
     )
@@ -514,6 +530,8 @@ def build_advice(
         fits=fits,
         base_plan=base_plan,
         coverage=coverage,
+        today_check=today_check,
+        week_checks=week_checks,
         best_fits=_rank_by_fit(candidates, fits),
         overall=_rank_overall(candidates, fits, streak_info),
     )
@@ -619,6 +637,35 @@ def format_advice(advice: Advice) -> str:
             f"      Paste your league's available players into "
             f"{my_team.FREE_AGENT_PATH} for a true waiver list.\n"
         )
+
+    if advice.week_checks:
+        total_gain = sum(c.gain for c in advice.week_checks)
+        lines.append("TODAY'S LINEUP")
+        lines.append("-" * 96)
+        for c in advice.week_checks:
+            if c.no_games:
+                lines.append(f"  {c.date:%a %d %b}  no NHL games")
+                continue
+            head = (
+                f"  {c.date:%a %d %b}  {c.current_points:>6.1f} -> "
+                f"{c.optimal_points:>6.1f}   {c.gain:+.1f}"
+            )
+            lines.append(head + ("   (lineup is optimal)" if not c.moves else ""))
+            for m in c.moves:
+                tag = "FREE " if m.free else "judge"
+                lines.append(
+                    f"      [{tag}] {m.slot.upper():<3} START {m.start} / "
+                    f"SIT {m.sit}   {m.gain:+.1f}  -- {m.note}"
+                )
+        lines.append(
+            f"\n  {total_gain:+.1f} points available this week from lineup "
+            f"changes alone."
+        )
+        lines.append(
+            "  FREE moves displace a player whose team is idle -- a certain "
+            "gain. 'judge' moves are projection differences."
+        )
+        lines.append("")
 
     if advice.coverage:
         lines.append("WHERE YOUR ROSTER IS SHORT")
