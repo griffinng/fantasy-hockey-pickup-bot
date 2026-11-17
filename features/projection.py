@@ -379,6 +379,16 @@ class PlayerProjection:
     recent_fp_per_game: float = 0.0
     season_fp_per_game: float = 0.0
     recent_games: int = 0
+    # What he has already banked in THIS fantasy week, and in how many games.
+    # Kept separate from week_points, which is forward-looking only -- mixing
+    # the two makes a number nobody can act on.
+    points_so_far: float = 0.0
+    games_played_this_week: int = 0
+
+    @property
+    def week_total(self) -> float:
+        """Banked plus projected: what the full week should end up at."""
+        return round(self.points_so_far + self.week_points, 2)
 
     @property
     def form_delta(self) -> float:
@@ -549,6 +559,11 @@ def project_all(
     team_pp = nhl_rest.team_powerplay_season()
     priors = build_positional_priors(season[0], season[1], season[2], roles)
 
+    # What everyone has already scored in this fantasy week, so the UI can show
+    # banked points separately from projected ones.
+    week_start, _ = matchups.fantasy_week_bounds(today or _dt.date.today())
+    wtd_summary, wtd_realtime = week_to_date_stats(week_start, today)
+
     if progress:
         print(f"Projecting {len(roles)} skaters...")
 
@@ -568,8 +583,42 @@ def project_all(
             pid, window[0], window[2]
         )
         proj.season_fp_per_game, _ = _observed_rate(pid, season[0], season[2])
+        banked_rate, banked_games = _observed_rate(pid, wtd_summary, wtd_realtime)
+        proj.points_so_far = round(banked_rate * banked_games, 2)
+        proj.games_played_this_week = banked_games
         out[pid] = proj
     return out
+
+
+def week_to_date_stats(
+    week_start: _dt.date, today: _dt.date | None = None
+) -> tuple[dict[int, dict], dict[int, dict]]:
+    """
+    Skater totals for the current fantasy week so far.
+
+    Only completed games produce stats, so a date range running to today
+    naturally captures exactly what has been banked -- including a game that
+    finished this afternoon, which is precisely the case that makes a single
+    combined "week points" column confusing.
+    """
+    today = today or _dt.date.today()
+    summary = {
+        int(r["playerId"]): r
+        for r in nhl_rest._fetch(
+            "skater/summary", nhl_rest._date_exp(week_start, today),
+            aggregate=True, ttl=900,
+        )
+        if r.get("playerId")
+    }
+    realtime = {
+        int(r["playerId"]): r
+        for r in nhl_rest._fetch(
+            "skater/realtime", nhl_rest._date_exp(week_start, today),
+            aggregate=True, ttl=900,
+        )
+        if r.get("playerId")
+    }
+    return summary, realtime
 
 
 def _observed_rate(

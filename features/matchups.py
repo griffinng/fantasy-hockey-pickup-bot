@@ -55,10 +55,19 @@ class Game:
     opponent: str
     is_home: bool
     is_back_to_back: bool = False
+    # NHL game state: FUT/PRE (not started), LIVE/CRIT (in progress),
+    # OFF/FINAL (finished). Needed because a game that ended earlier today is
+    # still "today", and counting it as remaining would double-count it
+    # against points the player has already banked this week.
+    state: str = "FUT"
 
     @property
     def label(self) -> str:
         return f"{'vs' if self.is_home else '@'} {self.opponent}"
+
+    @property
+    def is_finished(self) -> bool:
+        return self.state.upper() in ("OFF", "FINAL")
 
 
 @dataclasses.dataclass
@@ -165,7 +174,7 @@ def team_games(
 
     abbrev = nhl_client._nhl_abbrev(team)
     all_dates: list[_dt.date] = []
-    parsed: list[tuple[_dt.date, str, bool]] = []
+    parsed: list[tuple[_dt.date, str, bool, str]] = []
     for g in raw:
         try:
             gd = _dt.date.fromisoformat(str(g.get("gameDate", ""))[:10])
@@ -178,11 +187,11 @@ def team_games(
         is_home = home == abbrev
         opponent = away if is_home else home
         all_dates.append(gd)
-        parsed.append((gd, opponent, is_home))
+        parsed.append((gd, opponent, is_home, str(g.get("gameState", "FUT"))))
 
     date_set = set(all_dates)
     games: list[Game] = []
-    for gd, opponent, is_home in parsed:
+    for gd, opponent, is_home, state in parsed:
         if not (start <= gd <= end):
             continue
         games.append(
@@ -191,6 +200,7 @@ def team_games(
                 opponent=opponent,
                 is_home=is_home,
                 is_back_to_back=(gd - _dt.timedelta(days=1)) in date_set,
+                state=state,
             )
         )
     games.sort(key=lambda g: g.date)
@@ -205,11 +215,23 @@ def remaining_games(
     """
     Games left in the current fantasy week. This is the number that drives the
     whole weekly projection.
+
+    Games that have already finished are excluded even when they fall on
+    today's date. Without that check, an afternoon game that ended hours ago
+    still counts as "remaining", and the player gets projected for points he
+    has in fact already banked.
     """
     today = today or _dt.date.today()
     _, week_end = fantasy_week_bounds(today)
     start = today if include_today else today + _dt.timedelta(days=1)
-    return team_games(team, start, week_end)
+    return [g for g in team_games(team, start, week_end) if not g.is_finished]
+
+
+def played_games(team: str, today: _dt.date | None = None) -> list[Game]:
+    """Games this team has already completed in the current fantasy week."""
+    today = today or _dt.date.today()
+    week_start, _ = fantasy_week_bounds(today)
+    return [g for g in team_games(team, week_start, today) if g.is_finished]
 
 
 def situational_mult(game: Game) -> float:

@@ -405,20 +405,26 @@ def format_advice(advice: Advice) -> str:
         )
     else:
         lines.append("YOUR ROSTER -- most droppable first")
-        lines.append("-" * 96)
         lines.append(
-            f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'ROLE':<9} "
-            f"{'WEEK':>7} {'KEEP/GM':>8} {'L14':>6} {'FORM':>6}  NOTE"
+            "PL/LT = games played this week / left this week.  "
+            "SCORED is banked, PROJ+ is still to come."
+        )
+        lines.append("-" * 108)
+        lines.append(
+            f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'PL':>3} {'LT':>3} "
+            f"{'ROLE':<9} {'SCORED':>7} {'PROJ+':>7} {'TOTAL':>7} "
+            f"{'KEEP/GM':>8} {'L14':>6}  NOTE"
         )
         for entry in advice.roster:
             p = entry.projection
             lines.append(
                 f"{p.name:<24} {p.team:<4} "
-                f"{names.display_position(p.position):<4} {p.games_left:>3} "
-                f"{role_label(p):<9} {p.week_points:>7.2f} "
+                f"{names.display_position(p.position):<4} "
+                f"{p.games_played_this_week:>3} {p.games_left:>3} "
+                f"{role_label(p):<9} {p.points_so_far:>7.1f} "
+                f"{p.week_points:>7.1f} {p.week_total:>7.1f} "
                 f"{entry.keep_value:>8.2f} "
-                f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f} "
-                f"{getattr(p, 'form_delta', 0.0):>+6.1f}  {p.why[:30]}"
+                f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f}  {p.why[:26]}"
             )
         lines.append("")
 

@@ -361,10 +361,12 @@ with tab_team:
     else:
         st.subheader("Your roster, most droppable first")
         st.caption(
-            "**Week Pts** is what he gives you before Sunday. **Keep/Gm** is "
-            "what he is worth per game with the schedule stripped out -- that is "
-            "the number that should drive a drop, because schedules reset every "
-            "week but the player does not."
+            "**Scored** is banked and unchangeable. **Proj +** is what is still "
+            "to come — that is the only part an add or drop can affect, so it is "
+            "the number to compare against a free agent. **Keep/Gm** strips the "
+            "schedule out entirely: it is what he is worth on a neutral night, "
+            "and it is what should stop you cutting a good player who happens to "
+            "have a thin week."
         )
         rows = []
         for entry in advice.roster:
@@ -374,10 +376,13 @@ with tab_team:
                     "Player": p.name,
                     "Tm": p.team,
                     "Pos": names.display_position(p.position),
-                    "Week Pts": round(p.week_points, 1),
+                    "GP played": p.games_played_this_week,
+                    "GP left": p.games_left,
+                    "Scored": round(p.points_so_far, 1),
+                    "Proj +": round(p.week_points, 1),
+                    "Week total": round(p.week_total, 1),
                     "Keep/Gm": round(entry.keep_value, 1),
                     "Drop score": round(entry.drop_score, 1),
-                    "GP": p.games_left,
                     "Role": advisor.role_label(p),
                     "Status": getattr(_role(p), "injury_status", "") or (
                         "GTD" if getattr(_role(p), "game_time_decision", False) else ""
@@ -390,10 +395,45 @@ with tab_team:
             use_container_width=True,
             hide_index=True,
             height=520,
+            column_config={
+                "GP played": st.column_config.NumberColumn(
+                    "GP played",
+                    help="Games his team has already played in this fantasy week",
+                    width="small",
+                ),
+                "GP left": st.column_config.NumberColumn(
+                    "GP left",
+                    help="Games still to come before Sunday. Finished games are "
+                         "excluded even if they were earlier today.",
+                    width="small",
+                ),
+                "Scored": st.column_config.NumberColumn(
+                    "Scored",
+                    help="Fantasy points already banked this week. Done and "
+                         "dusted — nothing you do now changes it.",
+                    format="%.1f",
+                ),
+                "Proj +": st.column_config.NumberColumn(
+                    "Proj +",
+                    help="Projected ADDITIONAL points from here to Sunday. This "
+                         "is the number that should drive an add or a drop, "
+                         "because it is the only part still in play.",
+                    format="%.1f",
+                ),
+                "Week total": st.column_config.NumberColumn(
+                    "Week total",
+                    help="Scored plus projected — where the week should finish.",
+                    format="%.1f",
+                ),
+            },
         )
 
-        total = sum(e.projection.week_points for e in advice.roster)
-        st.metric("Projected team points, rest of week", f"{total:.1f}")
+        banked = sum(e.projection.points_so_far for e in advice.roster)
+        ahead = sum(e.projection.week_points for e in advice.roster)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Scored so far this week", f"{banked:.1f}")
+        c2.metric("Projected rest of week", f"{ahead:.1f}")
+        c3.metric("Projected week total", f"{banked + ahead:.1f}")
 
     if advice.ir_stash:
         st.subheader("Stashed on IR")

@@ -78,10 +78,23 @@ class GoalieProjection:
     es_toi: float = 0.0
     pp_toi: float = 0.0
 
+    points_so_far: float = 0.0
+    games_played_this_week: int = 0
+    recent_fp_per_game: float = 0.0
+    season_fp_per_game: float = 0.0
+
+    @property
+    def form_delta(self) -> float:
+        return round(self.recent_fp_per_game - self.season_fp_per_game, 2)
+
     # goalie-specific
     depth: int | None = None
     save_pct: float = 0.0
     expected_starts: float = 0.0
+
+    @property
+    def week_total(self) -> float:
+        return round(self.points_so_far + self.week_points, 2)
 
     @property
     def games_left(self) -> int:
@@ -223,6 +236,18 @@ def project_goalies(
         if teams else FALLBACK_SHOTS
     )
 
+    # Points already banked this fantasy week, shown separately from projected.
+    week_start, _ = matchups.fantasy_week_bounds(today or _dt.date.today())
+    banked = {
+        int(r["playerId"]): r
+        for r in nhl_rest._fetch(
+            "goalie/summary",
+            nhl_rest._date_exp(week_start, today or _dt.date.today()),
+            aggregate=True, ttl=900,
+        )
+        if r.get("playerId")
+    }
+
     out: dict[int, GoalieProjection] = {}
     targets = goalie_ids if goalie_ids is not None else set(season)
 
@@ -246,6 +271,15 @@ def project_goalies(
             nhl_id=pid, name=name, team=team, depth=depth,
             save_pct=save_pct,
         )
+        brow = banked.get(pid)
+        if brow:
+            proj.games_played_this_week = int(brow.get("gamesPlayed") or 0)
+            proj.points_so_far = round(goalie_fantasy_points(
+                wins=brow.get("wins", 0) or 0,
+                goals_against=brow.get("goalsAgainst", 0) or 0,
+                saves=brow.get("saves", 0) or 0,
+                shutouts=brow.get("shutouts", 0) or 0,
+            ), 2)
 
         if (injury_by_id.get(pid) or "").lower() in ("out", "ir", "ltir"):
             proj.why = f"{injury_by_id[pid].upper()} -- not available"
@@ -294,6 +328,21 @@ def project_goalies(
                     points=round(points, 2),
                 )
             )
+
+        # Observed form, shown for judgement like the skaters'.
+        def _rate(row: dict) -> float:
+            gp = float((row or {}).get("gamesPlayed") or 0)
+            if gp <= 0:
+                return 0.0
+            return round(goalie_fantasy_points(
+                wins=row.get("wins", 0) or 0,
+                goals_against=row.get("goalsAgainst", 0) or 0,
+                saves=row.get("saves", 0) or 0,
+                shutouts=row.get("shutouts", 0) or 0,
+            ) / gp, 2)
+
+        proj.recent_fp_per_game = _rate(wrow)
+        proj.season_fp_per_game = _rate(srow)
 
         proj.week_points = round(total, 2)
         proj.expected_starts = round(expected_starts, 2)
