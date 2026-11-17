@@ -10,3 +10,6 @@ yfpy>=10.5.0
 
 # Lets Streamlit reload imported modules, not just app.py, on change.
 watchdog>=6.0
+
+# Exact daily lineup assignment (features/lineup.py).
+scipy>=1.11

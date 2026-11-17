@@ -99,3 +99,13 @@ TREND_BONUS_VALUE = 0.10       # +10% to final score
 SCHEDULE_WEEKS_AHEAD = 8
 
 NHL_API_BASE = "https://api-web.nhle.com/v1"
+
+
+# ---------------------------------------------------------------------------
+# Daily lineup slots
+# ---------------------------------------------------------------------------
+# Active slots that must be filled each day, read from the Yahoo roster page
+# (2C, 2LW, 2RW, 4D, 2G, plus bench and IR which are not scored). The lineup
+# solver uses this to work out which days you are short and what a pickup is
+# actually worth to you.
+ROSTER_SLOTS = {"c": 2, "lw": 2, "rw": 2, "d": 4, "g": 2}

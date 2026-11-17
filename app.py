@@ -310,112 +310,217 @@ tab_pickups, tab_team, tab_moves, tab_detail = st.tabs(
 # ---------------------------------------------------------------------------
 
 with tab_pickups:
-    candidates = apply_filters(advice.candidates)
+    fits = getattr(advice, "fits", {}) or {}
+    streaks = getattr(advice, "streaks", {}) or {}
 
-    promoted = [p for p in candidates if _role(p).role_change == "promoted"]
-    if promoted:
-        st.subheader("Role changes worth acting on")
-        st.caption(
-            "These players were just given a bigger job. Their ice time has "
-            "changed but their stat line has not caught up, which is exactly "
-            "when they are cheapest to acquire."
-        )
-        cols = st.columns(min(4, len(promoted)))
-        for col, p in zip(cols, promoted[:4]):
+    def fit_of(p):
+        return fits.get(p.nhl_id)
+
+    def base_row(p):
+        f = fit_of(p)
+        s = streaks.get(p.nhl_id)
+        return {
+            "Player": p.name,
+            "Tm": p.team,
+            "Pos": names.display_position(p.position),
+            "Proj week": round(p.week_points, 1),
+            "Fit +": round(f.marginal, 1) if f else 0.0,
+            "Heat": round(getattr(s, "heat", 0.0), 1) if s else 0.0,
+            "GP": p.games_left,
+            "Role": advisor.role_label(p),
+            "L14": getattr(p, "recent_fp_per_game", 0.0),
+            "Why": p.why,
+        }
+
+    SHARED_COLS = {
+        "Proj week": st.column_config.NumberColumn(
+            "Proj week",
+            help="Points he is expected to score — how good he is in the "
+                 "abstract. An upper bound: it assumes he plays every game and "
+                 "that you start him every time.",
+            format="%.1f",
+        ),
+        "Fit +": st.column_config.NumberColumn(
+            "Fit +",
+            help="Points he would actually ADD to the best lineup you can "
+                 "field, given your open slots. Zero means your slots are "
+                 "already full on the days he plays.",
+            format="%+.1f",
+        ),
+        "Heat": st.column_config.NumberColumn(
+            "Heat",
+            help="How hard he is going right now, measured against par for his "
+                 "position across several trailing windows.",
+            format="%.1f",
+        ),
+        "GP": st.column_config.NumberColumn(
+            "GP", help="Games left this week", width="small"
+        ),
+    }
+
+    # --- headline: the combined view --------------------------------------
+    st.subheader("Overall best fits for your review")
+    st.caption(
+        "One ranking blending all three views below — how good he is, how much "
+        "he helps *your* roster, and whether he is going right now. Roster fit "
+        "leads, because a player who cannot crack your lineup is worth nothing "
+        "however well he projects."
+    )
+
+    overall = getattr(advice, "overall", []) or []
+    if overall:
+        cols = st.columns(min(4, len(overall[:4])))
+        for col, (score, p) in zip(cols, overall[:4]):
+            f = fit_of(p)
+            s = streaks.get(p.nhl_id)
             with col:
                 st.metric(
                     p.name,
                     f"{p.week_points:.1f} pts",
-                    f"{advisor.role_label(p)}, {p.games_left} games",
+                    f"fit {f.marginal:+.1f}" if f else "fit +0.0",
                 )
-                st.caption(_role(p).role_note)
-        st.divider()
+                bits = [f"{advisor.role_label(p)}, {p.games_left} games"]
+                if f and f.marginal > 0.05:
+                    bits.append(f.note)
+                if s and getattr(s, "is_hot", False):
+                    bits.append("hot: " + getattr(s, "label", ""))
+                st.caption(" · ".join(bits))
 
-    if advice.hot_candidates:
-        with st.expander(
-            f"🔥 Running hot — {len(advice.hot_candidates)} available players "
-            f"erupting right now", expanded=True
-        ):
+        st.dataframe(
+            pd.DataFrame([
+                {"Score": score, **base_row(p)} for score, p in overall[:25]
+            ]),
+            use_container_width=True, hide_index=True, height=360,
+            column_config={
+                **SHARED_COLS,
+                "Score": st.column_config.ProgressColumn(
+                    "Score", help="Blended across projection, fit and heat.",
+                    format="%.0f", min_value=0, max_value=100,
+                ),
+            },
+        )
+
+    st.divider()
+
+    # --- your coverage, which is what makes Fit mean anything -------------
+    coverage = getattr(advice, "coverage", []) or []
+    if coverage:
+        with st.expander("Where your roster is short this week", expanded=False):
             st.caption(
-                "Sorted by how hard they are going, not by projection. Every "
-                "window is measured from the player's most recent game and "
-                "several lengths are tested (2, 3, 5, 8, 10), so a two-game "
-                "eruption and a hot fortnight both get caught. The bar is "
-                "**position-relative**: par is about 4.9 fantasy points a game "
-                "for a forward and 4.2 for a defenceman, so a D is not held to "
-                "a forward's standard. A streak is mostly a good player "
-                "*becoming visible* rather than one improving — see "
-                "`tests/hot_hand_study.py`."
+                "A day with empty slots is only an opportunity if the NHL is "
+                "actually playing. The solver only ever assigns players whose "
+                "teams have a game, so a quiet league day correctly shows as "
+                "nothing to fix rather than a hole to fill."
             )
-            hot_rows = []
-            for p in advice.hot_candidates:
-                info = advice.streaks.get(p.nhl_id)
-                if not info:
-                    continue
-                # getattr throughout: Streamlit reloads this script on change
-                # but keeps already-imported modules in memory, so a running
-                # server can hold an older StreakInfo than the one this code
-                # expects. A missing field should degrade a column, not take
-                # the whole page down with a traceback.
-                hot_rows.append({
-                    "Player": p.name,
-                    "Tm": p.team,
-                    "Pos": names.display_position(p.position),
-                    "Heat": getattr(info, "heat", 0.0),
-                    "vs Self": getattr(info, "breakout", 0.0),
-                    "Streak": getattr(info, "label", "-"),
-                    "Cooling": "yes" if getattr(info, "cooling", False) else "",
-                    "GP": p.games_left,
-                    "Proj week": round(p.week_points, 1),
-                    "Role": advisor.role_label(p),
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Day": f"{d:%a %d %b}",
+                        "Slots filled": filled,
+                        "Of": total,
+                        "Empty": ", ".join(
+                            names.display_position(e) for e in empty
+                        ) or "—",
+                    }
+                    for d, filled, total, empty in coverage
+                ]),
+                use_container_width=True, hide_index=True,
+            )
+
+    # --- the three views ---------------------------------------------------
+    view_top, view_hot, view_fit = st.tabs(
+        ["Top projected", "Running hot", "Fills my slots"]
+    )
+
+    with view_top:
+        st.caption(
+            "Pure projection — the best available players, regardless of "
+            "whether you have room to start them."
+        )
+        ranked = apply_filters(advice.candidates)
+        if ranked:
+            st.dataframe(
+                pd.DataFrame([base_row(p) for p in ranked]),
+                use_container_width=True, hide_index=True, height=520,
+                column_config=SHARED_COLS,
+            )
+        else:
+            st.write("No players match the current filters.")
+
+    with view_hot:
+        hot = [p for p in (advice.hot_candidates or []) if streaks.get(p.nhl_id)]
+        hot = apply_filters(hot)
+        st.caption(
+            "Sorted by how hard they are going, not by projection. Windows of "
+            "2, 3, 5, 8 and 10 games are all measured from the player's most "
+            "recent game, and the bar is position-relative. A streak is mostly "
+            "a good player *becoming visible* rather than one improving — see "
+            "`tests/hot_hand_study.py`."
+        )
+        if hot:
+            rows = []
+            for p in hot:
+                s = streaks[p.nhl_id]
+                rows.append({
+                    **base_row(p),
+                    "vs Self": getattr(s, "breakout", 0.0),
+                    "Streak": getattr(s, "label", "-"),
+                    "Cooling": "yes" if getattr(s, "cooling", False) else "",
                 })
             st.dataframe(
-                pd.DataFrame(hot_rows),
-                use_container_width=True,
-                hide_index=True,
+                pd.DataFrame(rows), use_container_width=True,
+                hide_index=True, height=520,
                 column_config={
-                    "Heat": st.column_config.ProgressColumn(
-                        "Heat",
-                        help="Recent scoring plus extra weight for consecutive "
-                             "big games and huge nights, since the lift after a "
-                             "streak grows with its intensity.",
-                        format="%.1f", min_value=0, max_value=20,
-                    ),
+                    **SHARED_COLS,
                     "vs Self": st.column_config.NumberColumn(
                         "vs Self",
-                        help="How far above his OWN season pace he is running. "
-                             "High here means a genuine breakout rather than a "
-                             "good player having a normal good week.",
+                        help="Lift over his OWN season pace — a genuine "
+                             "breakout rather than a good player having a "
+                             "normal good week.",
                         format="%+.1f",
                     ),
-                    "Cooling": st.column_config.TextColumn(
-                        "Cooling",
-                        help="The streak is in the window but his most recent "
-                             "game was below positional par — it may already be "
-                             "over.",
+                },
+            )
+        else:
+            st.write("Nobody is running hot that matches the current filters.")
+
+    with view_fit:
+        st.caption(
+            "Ranked by what each player would actually ADD to the best lineup "
+            "you can field. A high projection with **Fit +0.0** means your "
+            "slots are already full on the days he plays — he would sit on "
+            "your bench."
+        )
+        best = apply_filters(getattr(advice, "best_fits", []) or [])
+        if best:
+            rows = []
+            for p in best:
+                f = fit_of(p)
+                rows.append({
+                    **base_row(p),
+                    "Starts": f.starts if f else 0,
+                    "When": ", ".join(f"{d:%a}" for d in f.days_used) if f else "",
+                })
+            st.dataframe(
+                pd.DataFrame(rows), use_container_width=True,
+                hide_index=True, height=520,
+                column_config={
+                    **SHARED_COLS,
+                    "Starts": st.column_config.NumberColumn(
+                        "Starts",
+                        help="Days he would actually crack your lineup",
                         width="small",
                     ),
                 },
             )
-        st.divider()
-
-    st.subheader(f"Ranked candidates ({len(candidates)})")
-    if candidates:
-        frame = projections_to_frame(candidates)
-        st.dataframe(
-            frame,
-            use_container_width=True,
-            hide_index=True,
-            column_config=COLUMN_CONFIG,
-            height=620,
-        )
-    else:
-        st.write("No players match the current filters.")
+        else:
+            st.info(
+                "No available player improves the lineup you can already "
+                "field. Your slots are full on the days that matter.",
+                icon="✅",
+            )
 
 
-# ---------------------------------------------------------------------------
-# My team
-# ---------------------------------------------------------------------------
 
 with tab_team:
     if advice.goalie_minimum_at_risk:

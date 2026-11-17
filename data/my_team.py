@@ -77,6 +77,24 @@ class PlayerRef:
     status: str | None = None     # Yahoo roster status: ir, ir+, o, out, dtd
 
     @property
+    def eligible(self) -> list[str]:
+        """
+        Every slot this player can legally fill, from Yahoo's own eligibility.
+
+        Written in the file as 'c/rw'. This is NOT the same as his NHL
+        position: Yahoo grants multi-position eligibility, and without it a
+        lineup solver cannot know that a bench winger may fill an open centre
+        slot.
+        """
+        raw = (self.position or "").lower()
+        out = [p.strip() for p in raw.replace(",", "/").split("/") if p.strip()]
+        return out or ["f"]
+
+    @property
+    def primary(self) -> str:
+        return self.eligible[0]
+
+    @property
     def is_out(self) -> bool:
         return (self.status or "").strip().lower() in (
             "ir", "ir+", "ir-", "o", "out", "na"
@@ -91,6 +109,11 @@ class PlayerRef:
 def _parse_line(line: str) -> PlayerRef | None:
     text = line.strip()
     if not text or text.startswith("#"):
+        return None
+    # Trailing comments, so a line can carry a note (the Yahoo slot, say)
+    # without the parser swallowing it as part of the position.
+    text = text.split("#", 1)[0].strip()
+    if not text:
         return None
     # Accept commas or pipes as separators
     parts = [p.strip() for p in text.replace("|", ",").split(",") if p.strip()]

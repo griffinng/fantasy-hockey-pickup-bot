@@ -167,3 +167,24 @@ goalies:
 streaks:
   scale: 0.0
   max_bonus: 2.5               # ceiling, points per game
+
+# --- Combined "best fits" ranking ------------------------------------------
+# The headline list blends three views that answer different questions and
+# routinely disagree:
+#
+#   projection  how good is he, in the abstract
+#   fit         how much he improves the lineups YOUR roster can field
+#   heat        whether something is happening with him right now
+#
+# Fit leads because it is the only one measured against your actual team: a
+# player who cannot crack your lineup is worth nothing however well he
+# projects. Heat trails because the hot-streak study found it real but modest,
+# and chiefly useful for spotting players rather than preferring them.
+#
+# Unlike the rate weights, these are a judgement call and not a backtested
+# result. There is no clean way to backtest them without a history of what the
+# roster looked like each week.
+overall:
+  projection: 0.35
+  fit: 0.45
+  heat: 0.20

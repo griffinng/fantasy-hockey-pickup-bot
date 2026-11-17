@@ -30,6 +30,7 @@ import data.my_team as my_team
 import data.names as names
 import data.nhl_stats_rest as nhl_rest
 import features.goalies as goalies
+import features.lineup as lineup
 import features.matchups as matchups
 import features.projection as projection
 import features.streaks as streaks_mod
@@ -268,6 +269,78 @@ def suggest_moves(
     return moves
 
 
+def _normalise(values: dict[int, float]) -> dict[int, float]:
+    """Scale a set of scores onto 0-1 so unlike quantities can be blended."""
+    if not values:
+        return {}
+    lo, hi = min(values.values()), max(values.values())
+    if hi - lo < 1e-9:
+        return {k: 0.0 for k in values}
+    return {k: (v - lo) / (hi - lo) for k, v in values.items()}
+
+
+def _rank_by_fit(candidates: list, fits: dict) -> list:
+    """Candidates sorted by how much they improve the lineups you can field."""
+    scored = [
+        p for p in candidates
+        if fits.get(p.nhl_id) and fits[p.nhl_id].marginal > 0.05
+    ]
+    scored.sort(key=lambda p: -fits[p.nhl_id].marginal)
+    return scored
+
+
+def _rank_overall(candidates: list, fits: dict, streaks: dict) -> list:
+    """
+    The combined view: one ranking blending all three signals.
+
+    They answer genuinely different questions and routinely disagree, which is
+    the whole reason for showing them side by side as well:
+
+      projection  how good is he, in the abstract
+      fit         how much does he help THIS roster, given your open slots
+      heat        is something happening with him right now
+
+    Fit carries the most weight because it is the only one measured against
+    your actual team -- a player who cannot crack your lineup is worth nothing
+    however well he projects. Heat carries the least: the hot-streak study
+    found it real but modest, and mostly a way of spotting players rather than
+    a reason to prefer them.
+
+    These weights are a judgement call, not a backtested result, and they are
+    in models/weights.yaml so they can be argued with.
+    """
+    import features.projection as _projection
+
+    weights = _projection.load_weights().get("overall") or {}
+    w_proj = float(weights.get("projection", 0.35))
+    w_fit = float(weights.get("fit", 0.45))
+    w_heat = float(weights.get("heat", 0.20))
+
+    proj_n = _normalise({p.nhl_id: p.week_points for p in candidates})
+    fit_n = _normalise({
+        p.nhl_id: (fits[p.nhl_id].marginal if fits.get(p.nhl_id) else 0.0)
+        for p in candidates
+    })
+    heat_n = _normalise({
+        p.nhl_id: (
+            streaks[p.nhl_id].heat
+            if streaks.get(p.nhl_id) and streaks[p.nhl_id].is_hot else 0.0
+        )
+        for p in candidates
+    })
+
+    ranked = []
+    for p in candidates:
+        score = (
+            w_proj * proj_n.get(p.nhl_id, 0.0)
+            + w_fit * fit_n.get(p.nhl_id, 0.0)
+            + w_heat * heat_n.get(p.nhl_id, 0.0)
+        )
+        ranked.append((round(score * 100, 1), p))
+    ranked.sort(key=lambda r: -r[0])
+    return ranked
+
+
 def build_index() -> names.NameIndex:
     """Name index covering skaters and goalies."""
     index = names.NameIndex.from_nhl_rows(nhl_rest.skater_summary_season())
@@ -292,6 +365,11 @@ class Advice:
     streaks: dict = dataclasses.field(default_factory=dict)
     roster_freshness: object | None = None
     free_agent_freshness: object | None = None
+    fits: dict = dataclasses.field(default_factory=dict)
+    base_plan: object | None = None
+    coverage: list = dataclasses.field(default_factory=list)
+    best_fits: list = dataclasses.field(default_factory=list)
+    overall: list = dataclasses.field(default_factory=list)
 
     @property
     def stale_sources(self) -> list:
@@ -373,6 +451,38 @@ def build_advice(
     ]
     hot.sort(key=lambda p: -streak_info[p.nhl_id].heat)
 
+    # --- lineup fit -------------------------------------------------------
+    # What each candidate is actually worth to THIS roster, as opposed to how
+    # good he is in the abstract. See features/lineup.py.
+    if progress:
+        print("Solving daily lineups...")
+    slots = lineup.league_slots()
+    days = lineup.remaining_days(today)
+    roster_refs_by_id = {r.nhl_id: r for r in roster_refs if r.nhl_id}
+
+    roster_candidates = [
+        lineup.candidate_from_projection(
+            e.projection,
+            lineup.eligibility_of(
+                roster_refs_by_id.get(e.projection.nhl_id),
+                e.projection.position,
+            ),
+        )
+        for e in roster
+    ]
+    base_plan = lineup.solve_week(roster_candidates, days, slots)
+    coverage = lineup.coverage_report(roster_candidates, days, slots)
+
+    fa_refs_by_id = {r.nhl_id: r for r in fa_refs if r.nhl_id}
+    fits: dict[int, lineup.FitResult] = {}
+    for p in candidates:
+        cand = lineup.candidate_from_projection(
+            p, lineup.eligibility_of(fa_refs_by_id.get(p.nhl_id), p.position)
+        )
+        fits[p.nhl_id] = lineup.marginal_value(
+            roster_candidates, cand, days, slots, base_plan=base_plan
+        )
+
     remaining = max(
         0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
     )
@@ -401,6 +511,11 @@ def build_advice(
         streaks=streak_info,
         roster_freshness=roster_freshness,
         free_agent_freshness=fa_freshness,
+        fits=fits,
+        base_plan=base_plan,
+        coverage=coverage,
+        best_fits=_rank_by_fit(candidates, fits),
+        overall=_rank_overall(candidates, fits, streak_info),
     )
 
 
@@ -505,7 +620,42 @@ def format_advice(advice: Advice) -> str:
             f"{my_team.FREE_AGENT_PATH} for a true waiver list.\n"
         )
 
-    lines.append("TOP PICKUP CANDIDATES")
+    if advice.coverage:
+        lines.append("WHERE YOUR ROSTER IS SHORT")
+        lines.append("-" * 96)
+        for day, filled, total, empty in advice.coverage:
+            gap = ", ".join(names.display_position(e) for e in empty) or "-"
+            lines.append(f"  {day:%a %d %b}  {filled:>2}/{total} slots filled   open: {gap}")
+        lines.append(
+            "  (an empty slot is only an opportunity if the NHL is playing "
+            "that day)"
+        )
+        lines.append("")
+
+    if advice.overall:
+        lines.append("OVERALL BEST FITS FOR YOUR REVIEW")
+        lines.append(
+            "Blended: how good he is, how much he helps YOUR roster, and "
+            "whether he is going right now."
+        )
+        lines.append("-" * 96)
+        lines.append(
+            f"{'':<3}{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} "
+            f"{'PROJ':>7} {'FIT+':>6} {'HEAT':>6}  WHEN HE STARTS"
+        )
+        for i, (score, p) in enumerate(advice.overall[:12], 1):
+            f = advice.fits.get(p.nhl_id)
+            when = ", ".join(f"{d:%a}" for d in f.days_used) if f and f.days_used else "-"
+            info = advice.streaks.get(p.nhl_id)
+            lines.append(
+                f"{i:>2}.{p.name:<24} {p.team:<4} "
+                f"{names.display_position(p.position):<4} {p.games_left:>3} "
+                f"{p.week_points:>7.1f} {(f.marginal if f else 0.0):>+6.1f} "
+                f"{getattr(info, 'heat', 0.0):>6.1f}  {when}"
+            )
+        lines.append("")
+
+    lines.append("TOP PICKUP CANDIDATES (by projection alone)")
     lines.append("-" * 96)
     lines.append(
         f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'ROLE':<9} "
