@@ -100,6 +100,8 @@ def projections_to_frame(projs: list[projection.PlayerProjection]) -> pd.DataFra
                 "ES TOI": nhl_rest.seconds_to_mmss(p.es_toi),
                 "PP TOI": nhl_rest.seconds_to_mmss(p.pp_toi),
                 "Pts/Gm": round(p.per_game_points, 1),
+                "L14 FP/Gm": getattr(p, "recent_fp_per_game", 0.0),
+                "Form": getattr(p, "form_delta", 0.0),
                 "Conf": round(p.confidence * 100),
                 "Flag": role_badge(p),
                 "Schedule": p.schedule_label,
@@ -126,6 +128,22 @@ COLUMN_CONFIG = {
     ),
     "GP": st.column_config.NumberColumn(
         "GP", help="Games his team has left in this fantasy week", width="small"
+    ),
+    "L14 FP/Gm": st.column_config.NumberColumn(
+        "L14 FP/Gm",
+        help="Fantasy points per game actually scored over the last 14 days. "
+             "Shown for your judgement — the model weights it only ~26%, "
+             "because backtesting says chasing recent points makes "
+             "projections worse. Cold players beat their projections more "
+             "often than hot ones do.",
+        format="%.1f",
+    ),
+    "Form": st.column_config.NumberColumn(
+        "Form",
+        help="Last 14 days minus season pace. Negative = currently cold. "
+             "A cold player whose ice time and PP role are unchanged is "
+             "usually unlucky rather than broken.",
+        format="%+.1f",
     ),
     "Why": st.column_config.TextColumn(
         "Why",

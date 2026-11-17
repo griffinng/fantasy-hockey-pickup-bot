@@ -373,6 +373,17 @@ class PlayerProjection:
     # that skaters and goalies, which are modelled completely differently, can
     # still be compared on a single number when deciding who to drop.
     keep_per_game: float = 0.0
+    # Observed form, shown but deliberately NOT weighted heavily. See the
+    # comment on `rates` in models/weights.yaml for the backtest that says
+    # chasing recent points makes projections worse.
+    recent_fp_per_game: float = 0.0
+    season_fp_per_game: float = 0.0
+    recent_games: int = 0
+
+    @property
+    def form_delta(self) -> float:
+        """Recent form minus season form. Negative = currently cold."""
+        return round(self.recent_fp_per_game - self.season_fp_per_game, 2)
 
     @property
     def is_goalie(self) -> bool:
@@ -549,11 +560,37 @@ def project_all(
         rates = estimate_rates(
             pid, role, window=window, season=season, priors=priors, weights=weights
         )
-        out[pid] = project_player(
+        proj = project_player(
             pid, role, rates=rates, profiles=profiles,
             team_pp_seconds=team_pp_seconds, weights=weights, today=today,
         )
+        proj.recent_fp_per_game, proj.recent_games = _observed_rate(
+            pid, window[0], window[2]
+        )
+        proj.season_fp_per_game, _ = _observed_rate(pid, season[0], season[2])
+        out[pid] = proj
     return out
+
+
+def _observed_rate(
+    pid: int, summary: dict[int, dict], realtime: dict[int, dict]
+) -> tuple[float, int]:
+    """Plain fantasy points per game actually scored. No modelling at all."""
+    row = summary.get(pid)
+    if not row:
+        return 0.0, 0
+    games = float(row.get("gamesPlayed") or 0)
+    if games <= 0:
+        return 0.0, 0
+    total = skater_fantasy_points(
+        goals=row.get("goals", 0) or 0,
+        assists=row.get("assists", 0) or 0,
+        ppp=row.get("ppPoints", 0) or 0,
+        shp=row.get("shPoints", 0) or 0,
+        sog=row.get("shots", 0) or 0,
+        blocks=(realtime.get(pid, {}) or {}).get("blockedShots", 0) or 0,
+    )
+    return round(total / games, 2), int(games)
 
 
 def explain_player(proj: PlayerProjection) -> str:

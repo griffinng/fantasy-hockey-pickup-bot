@@ -408,7 +408,7 @@ def format_advice(advice: Advice) -> str:
         lines.append("-" * 96)
         lines.append(
             f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'ROLE':<9} "
-            f"{'WEEK':>7} {'KEEP/GM':>8}  NOTE"
+            f"{'WEEK':>7} {'KEEP/GM':>8} {'L14':>6} {'FORM':>6}  NOTE"
         )
         for entry in advice.roster:
             p = entry.projection
@@ -416,7 +416,9 @@ def format_advice(advice: Advice) -> str:
                 f"{p.name:<24} {p.team:<4} "
                 f"{names.display_position(p.position):<4} {p.games_left:>3} "
                 f"{role_label(p):<9} {p.week_points:>7.2f} "
-                f"{entry.keep_value:>8.2f}  {p.why[:34]}"
+                f"{entry.keep_value:>8.2f} "
+                f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f} "
+                f"{getattr(p, 'form_delta', 0.0):>+6.1f}  {p.why[:30]}"
             )
         lines.append("")
 
@@ -445,14 +447,16 @@ def format_advice(advice: Advice) -> str:
     lines.append("-" * 96)
     lines.append(
         f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'ROLE':<9} "
-        f"{'WEEK':>7} {'CONF':>5}  WHY"
+        f"{'WEEK':>7} {'L14':>6} {'FORM':>6} {'CONF':>5}  WHY"
     )
     for p in advice.candidates[:20]:
         flag = "*" if _role_change(p) == "promoted" else " "
         lines.append(
             f"{flag}{p.name:<23} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
-            f"{role_label(p):<9} {p.week_points:>7.2f} {p.confidence:>5.0%}  "
-            f"{p.why[:34]}"
+            f"{role_label(p):<9} {p.week_points:>7.2f} "
+            f"{getattr(p, 'recent_fp_per_game', 0.0):>6.1f} "
+            f"{getattr(p, 'form_delta', 0.0):>+6.1f} {p.confidence:>5.0%}  "
+            f"{p.why[:30]}"
         )
     lines.append("")
 

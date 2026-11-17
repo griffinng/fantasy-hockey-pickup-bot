@@ -15,6 +15,43 @@ window_days: 14
 # are in *hours of ice time*, which makes them self-balancing: a player with
 # only 40 minutes in the window automatically leans on his season numbers and
 # the positional prior, while a full-time player leans on his own results.
+#
+# At the defaults below a typical regular's rate is roughly:
+#     26% recent form | 37% season | 37% positional prior
+#
+# That looks under-weighted on recent form, and it is deliberate. Measured over
+# five backtested weeks (2026-10-12 to 2026-11-09), pushing recency harder makes
+# the projections monotonically WORSE:
+#
+#     recent weight    top-20 actual pts    rank corr
+#     26% (default)          33.56            0.581
+#     ~45%                   33.17            0.575
+#     ~65%                   32.07            0.558
+#     ~80% (10d window)      31.34            0.546
+#     naive pts/gm x games   32.00            0.556
+#
+# The heaviest-recency setting is worse than doing no modelling at all.
+#
+# A direct test of the obvious objection -- "surely it over-rates cold players"
+# -- says the opposite. Bucketing players by trailing 10-day scoring and
+# comparing projection against what they actually went on to score:
+#
+#     COLD (bottom 25%)   beat projection by +3.34
+#     MID                 beat projection by +3.81
+#     HOT  (top 25%)      beat projection by +2.26
+#
+# Cold players outperform their projections by MORE than hot ones. This is mean
+# reversion: a cold player whose ice time and shot volume are unchanged is
+# usually just unlucky, and buying him is closer to a bargain than a trap.
+#
+# The real signal inside "he's been hot" is usually a role change -- more
+# power-play time, a promotion up the lines -- and the model captures that
+# directly and far more precisely through pp_share and line_rank than raw
+# points ever could.
+#
+# If you want to override this anyway, raise recent_multiplier and lower
+# season_multiplier and prior_hours together, then re-run `python -m
+# tests.backtest` and check you have not made it worse.
 rates:
   # Weight given to the trailing window, as a multiple of TOI actually observed.
   recent_multiplier: 1.0
