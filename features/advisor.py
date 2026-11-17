@@ -31,6 +31,7 @@ import data.names as names
 import data.nhl_stats_rest as nhl_rest
 import features.goalies as goalies
 import features.projection as projection
+import features.streaks as streaks_mod
 from features.projection import PlayerProjection
 
 # How much a drop decision weighs "what he does this week" against "what he is
@@ -286,6 +287,8 @@ class Advice:
     expected_goalie_appearances: float = 0.0
     goalie_minimum_at_risk: bool = False
     ir_stash: list[RosterEntry] = dataclasses.field(default_factory=list)
+    hot_candidates: list = dataclasses.field(default_factory=list)
+    streaks: dict = dataclasses.field(default_factory=dict)
 
 
 def build_advice(
@@ -334,6 +337,20 @@ def build_advice(
     pool.sort(key=lambda p: -p.week_points)
     candidates = pool[:max_candidates]
 
+    # Hot list: scan the WHOLE available pool, not just the top projections.
+    # The point of this list is to catch a player the projection has not
+    # noticed yet -- restricting it to players already ranked highly would
+    # defeat it entirely.
+    if progress:
+        print("Scanning for hot streaks...")
+    scan = [p for p in pool[:200] if not getattr(p, "is_goalie", False)]
+    streak_info = streaks_mod.streaks_for([p.nhl_id for p in scan], progress=progress)
+    hot = [
+        p for p in scan
+        if streak_info.get(p.nhl_id, streaks_mod.StreakInfo(0)).is_hot
+    ]
+    hot.sort(key=lambda p: -streak_info[p.nhl_id].heat)
+
     remaining = max(
         0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
     )
@@ -358,6 +375,8 @@ def build_advice(
         expected_goalie_appearances=expected_app,
         goalie_minimum_at_risk=at_risk,
         ir_stash=ir_stash,
+        hot_candidates=hot[:25],
+        streaks=streak_info,
     )
 
 
@@ -466,6 +485,28 @@ def format_advice(advice: Advice) -> str:
             f"{p.why[:30]}"
         )
     lines.append("")
+
+    if advice.hot_candidates:
+        lines.append("RUNNING HOT -- available players erupting right now")
+        lines.append(
+            "A streak is mostly a good player becoming visible rather than a "
+            "player improving."
+        )
+        lines.append("-" * 96)
+        lines.append(
+            f"{'PLAYER':<24} {'TM':<4} {'POS':<4} {'GP':>3} {'WEEK':>7} "
+            f"{'L5':>6}  STREAK"
+        )
+        for p in advice.hot_candidates[:12]:
+            info = advice.streaks.get(p.nhl_id)
+            if not info:
+                continue
+            lines.append(
+                f"{p.name:<24} {p.team:<4} "
+                f"{names.display_position(p.position):<4} {p.games_left:>3} "
+                f"{p.week_points:>7.1f} {info.last5_fp:>6.1f}  {info.label}"
+            )
+        lines.append("")
 
     lines.append(
         f"SUGGESTED MOVES -- {advice.moves_remaining} add(s) left this week "

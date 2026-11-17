@@ -309,6 +309,57 @@ with tab_pickups:
                 st.caption(_role(p).role_note)
         st.divider()
 
+    if advice.hot_candidates:
+        with st.expander(
+            f"🔥 Running hot — {len(advice.hot_candidates)} available players "
+            f"erupting right now", expanded=True
+        ):
+            st.caption(
+                "Sorted by how hard they are going, not by projection. A streak "
+                "is mostly a good player *becoming visible* rather than a player "
+                "improving — before their streaks these guys were averaging 7.5 "
+                "fantasy points a game against 4.2 for everyone else. There is "
+                "also a real but smaller step up afterwards, bigger the more "
+                "violent the streak. See `tests/hot_hand_study.py`."
+            )
+            hot_rows = []
+            for p in advice.hot_candidates:
+                info = advice.streaks.get(p.nhl_id)
+                if not info:
+                    continue
+                hot_rows.append({
+                    "Player": p.name,
+                    "Tm": p.team,
+                    "Pos": names.display_position(p.position),
+                    "Heat": info.heat,
+                    "L5 FP/Gm": info.last5_fp,
+                    "Best game": info.best_game,
+                    "Streak": info.label,
+                    "GP": p.games_left,
+                    "Proj week": round(p.week_points, 1),
+                    "Role": advisor.role_label(p),
+                })
+            st.dataframe(
+                pd.DataFrame(hot_rows),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Heat": st.column_config.ProgressColumn(
+                        "Heat",
+                        help="Recent scoring plus extra weight for consecutive "
+                             "big games and huge nights, since the lift after a "
+                             "streak grows with its intensity.",
+                        format="%.1f", min_value=0, max_value=20,
+                    ),
+                    "Best game": st.column_config.NumberColumn(
+                        "Best game",
+                        help="Highest single-game fantasy total in the last 10",
+                        format="%.1f",
+                    ),
+                },
+            )
+        st.divider()
+
     st.subheader(f"Ranked candidates ({len(candidates)})")
     if candidates:
         frame = projections_to_frame(candidates)
