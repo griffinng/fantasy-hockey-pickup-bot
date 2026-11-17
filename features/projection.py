@@ -38,6 +38,7 @@ from pathlib import Path
 
 import yaml
 
+import data.names as names
 import data.nhl_stats_rest as nhl_rest
 import features.matchups as matchups
 import features.roles as roles_mod
@@ -559,7 +560,7 @@ def explain_player(proj: PlayerProjection) -> str:
     role = proj.role
     r = proj.rates
     lines = [
-        f"{proj.name}  ({proj.team}, {proj.position.upper()})",
+        f"{proj.name}  ({proj.team}, {names.display_position(proj.position)})",
         "=" * 64,
         f"  Role        : {role.role_label}"
         + (f"   [{role.role_change.upper()}]" if role.role_change else ""),
@@ -626,7 +627,7 @@ def _demo() -> None:  # pragma: no cover - manual smoke check
     print("-" * 130)
     for p in ranked:
         print(
-            f"{p.name:<24} {p.team:<4} {p.position.upper():<4} {p.games_left:>3} "
+            f"{p.name:<24} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
             f"{p.role.role_label:<9} {p.week_points:>7.2f} {p.per_game_points:>6.2f} "
             f"{p.confidence:>5.0%}  {p.why[:60]}"
         )

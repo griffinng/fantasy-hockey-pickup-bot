@@ -26,6 +26,7 @@ import config
 import data.cache as cache
 import data.http as http
 import data.my_team as my_team
+import data.names as names
 import data.nhl_stats_rest as nhl_rest
 import features.advisor as advisor
 import features.goalies as goalies
@@ -90,7 +91,7 @@ def projections_to_frame(projs: list[projection.PlayerProjection]) -> pd.DataFra
             {
                 "Player": p.name,
                 "Tm": p.team,
-                "Pos": (p.position or "").upper(),
+                "Pos": names.display_position(p.position),
                 "Week Pts": round(p.week_points, 1),
                 "GP": p.games_left,
                 "Line": advisor.role_label(p),
@@ -345,7 +346,7 @@ with tab_team:
                 {
                     "Player": p.name,
                     "Tm": p.team,
-                    "Pos": (p.position or "").upper(),
+                    "Pos": names.display_position(p.position),
                     "Week Pts": round(p.week_points, 1),
                     "Keep/Gm": round(entry.keep_value, 1),
                     "Drop score": round(entry.drop_score, 1),
@@ -393,7 +394,7 @@ with tab_moves:
                 with left:
                     st.markdown(f"**ADD** {move.add.name}")
                     st.caption(
-                        f"{move.add.team} · {(move.add.position or '').upper()} · "
+                        f"{move.add.team} · {names.display_position(move.add.position)} · "
                         f"{advisor.role_label(move.add)} · {move.add.games_left} games"
                     )
                     st.caption(move.add.why)
@@ -401,7 +402,7 @@ with tab_moves:
                     st.markdown(f"**DROP** {move.drop.name}")
                     st.caption(
                         f"{move.drop.projection.team} · "
-                        f"{(move.drop.projection.position or '').upper()} · "
+                        f"{names.display_position(move.drop.projection.position)} · "
                         f"{advisor.role_label(move.drop.projection)} · "
                         f"{move.drop.projection.games_left} games"
                     )

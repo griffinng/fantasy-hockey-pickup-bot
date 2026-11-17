@@ -52,6 +52,24 @@ def normalize(name: str) -> str:
     return " ".join(parts)
 
 
+#: How positions are shown to a human. Daily Faceoff distinguishes left from
+#: right defence, which is useful internally -- it is one of the things that
+#: tells the two Elias Petterssons apart -- but it is noise on screen, where a
+#: defenceman is simply a defenceman.
+_DISPLAY_POSITIONS = {
+    "ld": "D", "rd": "D", "d": "D",
+    "lw": "LW", "rw": "RW", "l": "LW", "r": "RW",
+    "c": "C", "g": "G",
+}
+
+
+def display_position(position: str | None) -> str:
+    """'rd' -> 'D', 'lw' -> 'LW'. Unknown values pass through upper-cased."""
+    if not position:
+        return ""
+    return _DISPLAY_POSITIONS.get(position.lower(), position.upper())
+
+
 def _load_overrides() -> dict[str, int]:
     if not OVERRIDES_PATH.exists():
         return {}

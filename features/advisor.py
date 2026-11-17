@@ -396,7 +396,7 @@ def format_advice(advice: Advice) -> str:
             p = entry.projection
             note = p.why[:46]
             lines.append(
-                f"{p.name:<24} {p.team:<4} {p.position.upper():<4} {p.games_left:>3} "
+                f"{p.name:<24} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
                 f"{role_label(p):<9} {p.week_points:>7.2f} "
                 f"{entry.keep_value:>8.2f}  {note}"
             )
@@ -419,7 +419,7 @@ def format_advice(advice: Advice) -> str:
     for p in advice.candidates[:20]:
         flag = "*" if _role_change(p) == "promoted" else " "
         lines.append(
-            f"{flag}{p.name:<23} {p.team:<4} {p.position.upper():<4} {p.games_left:>3} "
+            f"{flag}{p.name:<23} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
             f"{role_label(p):<9} {p.week_points:>7.2f} {p.confidence:>5.0%}  "
             f"{p.why[:52]}"
         )
@@ -438,12 +438,12 @@ def format_advice(advice: Advice) -> str:
     for i, move in enumerate(advice.moves, 1):
         lines.append(
             f"{i}. ADD  {move.add.name} ({move.add.team}, "
-            f"{move.add.position.upper()}, {role_label(move.add)}, "
+            f"{names.display_position(move.add.position)}, {role_label(move.add)}, "
             f"{move.add.games_left} games) -- {move.add.week_points:.1f} pts"
         )
         lines.append(
             f"   DROP {move.drop.name} ({move.drop.projection.team}, "
-            f"{move.drop.projection.position.upper()}, "
+            f"{names.display_position(move.drop.projection.position)}, "
             f"{move.drop.projection.games_left} games) -- "
             f"{move.drop.projection.week_points:.1f} pts"
         )
