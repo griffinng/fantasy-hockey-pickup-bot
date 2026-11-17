@@ -246,6 +246,28 @@ st.caption(
     f"power-play role, line assignment and opponent strength."
 )
 
+# Freshness is checked HERE rather than read off `advice`, because `advice`
+# comes from an @st.cache_data function: a staleness warning computed inside
+# the cache would itself be stale, and would not appear until the very cache
+# it is warning about had already expired. It is two stat() calls.
+_week_start, _ = matchups.fantasy_week_bounds(today)
+_sources = [
+    my_team.freshness(my_team.ROSTER_PATH, _week_start),
+    my_team.freshness(my_team.FREE_AGENT_PATH, _week_start),
+]
+for _f in [f for f in _sources if f.needs_attention]:
+    st.error(
+        f"**Data may be out of date.** {_f.message}  \n"
+        f"Everything on this page is built from it — including the drop "
+        f"ranking and the suggested moves. Paste a fresh list in the sidebar, "
+        f"or ask Claude to re-read your league.",
+        icon="🕑",
+    )
+
+_aging = [f for f in _sources if f.level == "aging"]
+for _f in _aging:
+    st.caption(f"🕑 {_f.message}")
+
 if advice.unresolved_roster:
     st.error(
         "Could not identify these roster entries: "

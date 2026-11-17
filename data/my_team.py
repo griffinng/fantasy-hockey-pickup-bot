@@ -31,6 +31,7 @@ a name (Vancouver has two Elias Petterssons).
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 from pathlib import Path
 
 import data.names as names
@@ -136,6 +137,88 @@ def load_free_agents(index: names.NameIndex) -> list[PlayerRef]:
     callers should treat an empty list as "rank everyone".
     """
     return _resolve_all(_read_file(FREE_AGENT_PATH, FREE_AGENT_TEMPLATE), index)
+
+
+@dataclasses.dataclass
+class Freshness:
+    """How much to trust one of the roster files."""
+
+    path: Path
+    exists: bool
+    age_hours: float
+    predates_week: bool
+    level: str          # 'missing' | 'fresh' | 'aging' | 'stale'
+    message: str
+
+    @property
+    def is_stale(self) -> bool:
+        return self.level == "stale"
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.level in ("stale", "missing")
+
+
+#: A file younger than this is assumed current.
+FRESH_HOURS = 12
+#: Beyond this it is treated as stale regardless of the fantasy week.
+STALE_HOURS = 36
+
+
+def freshness(path: Path, week_start: _dt.date | None = None) -> Freshness:
+    """
+    Judge how current a roster file is.
+
+    These files are a snapshot taken from the Yahoo league pages, and they
+    persist on disk. That is the dangerous part: when they go out of date
+    nothing fails, the bot simply carries on giving confident advice about a
+    roster that no longer exists. Age alone is a weak signal, so this also
+    checks whether the file predates the current fantasy week -- adds reset
+    weekly and rosters churn most at the turn of a week, so a file written
+    before Monday is suspect however recently that was.
+    """
+    if not path.exists():
+        return Freshness(
+            path=path, exists=False, age_hours=float("inf"),
+            predates_week=True, level="missing",
+            message=f"{path.name} has not been created yet.",
+        )
+
+    modified = _dt.datetime.fromtimestamp(path.stat().st_mtime)
+    age_hours = (_dt.datetime.now() - modified).total_seconds() / 3600
+
+    if week_start is None:
+        today = _dt.date.today()
+        week_start = today - _dt.timedelta(days=today.weekday())
+    predates_week = modified.date() < week_start
+
+    if predates_week:
+        level = "stale"
+        message = (
+            f"{path.name} was last updated {modified:%a %d %b %H:%M}, before "
+            f"this fantasy week began. Rosters and free agents turn over at "
+            f"the start of a week — re-read the league before trusting this."
+        )
+    elif age_hours > STALE_HOURS:
+        level = "stale"
+        message = (
+            f"{path.name} is {age_hours / 24:.1f} days old "
+            f"({modified:%a %d %b %H:%M})."
+        )
+    elif age_hours > FRESH_HOURS:
+        level = "aging"
+        message = (
+            f"{path.name} was updated {age_hours:.0f} hours ago "
+            f"({modified:%a %H:%M})."
+        )
+    else:
+        level = "fresh"
+        message = f"{path.name} updated {age_hours:.0f}h ago."
+
+    return Freshness(
+        path=path, exists=True, age_hours=round(age_hours, 1),
+        predates_week=predates_week, level=level, message=message,
+    )
 
 
 def yahoo_api_available() -> bool:

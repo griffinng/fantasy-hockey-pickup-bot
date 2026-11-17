@@ -30,6 +30,7 @@ import data.my_team as my_team
 import data.names as names
 import data.nhl_stats_rest as nhl_rest
 import features.goalies as goalies
+import features.matchups as matchups
 import features.projection as projection
 import features.streaks as streaks_mod
 from features.projection import PlayerProjection
@@ -289,6 +290,16 @@ class Advice:
     ir_stash: list[RosterEntry] = dataclasses.field(default_factory=list)
     hot_candidates: list = dataclasses.field(default_factory=list)
     streaks: dict = dataclasses.field(default_factory=dict)
+    roster_freshness: object | None = None
+    free_agent_freshness: object | None = None
+
+    @property
+    def stale_sources(self) -> list:
+        """Roster files old enough to be giving you wrong answers."""
+        return [
+            f for f in (self.roster_freshness, self.free_agent_freshness)
+            if f is not None and f.needs_attention
+        ]
 
 
 def build_advice(
@@ -303,6 +314,13 @@ def build_advice(
 
     roster_refs = my_team.load_roster(index)
     fa_refs = my_team.load_free_agents(index)
+
+    # How much to trust those two files. They persist on disk, so when they go
+    # out of date nothing fails -- the bot just keeps advising on a roster that
+    # no longer exists.
+    week_start, _ = matchups.fantasy_week_bounds(today or _dt.date.today())
+    roster_freshness = my_team.freshness(my_team.ROSTER_PATH, week_start)
+    fa_freshness = my_team.freshness(my_team.FREE_AGENT_PATH, week_start)
 
     # Goalies are modelled separately and merged in, so that everything
     # downstream -- roster view, drop ranking, move suggestions -- sees one
@@ -381,6 +399,8 @@ def build_advice(
         ir_stash=ir_stash,
         hot_candidates=hot[:25],
         streaks=streak_info,
+        roster_freshness=roster_freshness,
+        free_agent_freshness=fa_freshness,
     )
 
 
@@ -392,6 +412,18 @@ def format_advice(advice: Advice) -> str:
         lines.append("COULD NOT IDENTIFY THESE ROSTER ENTRIES:")
         for raw in advice.unresolved_roster:
             lines.append(f"   ? {raw}")
+        lines.append("")
+
+    if advice.stale_sources:
+        lines.append("!" * 96)
+        lines.append("DATA MAY BE OUT OF DATE")
+        for f in advice.stale_sources:
+            lines.append(f"  {f.message}")
+        lines.append(
+            "  Everything below is built on these files, including the drop "
+            "ranking and the suggested moves."
+        )
+        lines.append("!" * 96)
         lines.append("")
 
     if advice.goalie_minimum_at_risk:
