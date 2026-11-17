@@ -399,39 +399,40 @@ def _confidence(role: PlayerRole, rates: RateSplit, weights: dict) -> float:
 def _explain(
     proj: PlayerProjection, role: PlayerRole, profiles: dict[str, matchups.OpponentProfile]
 ) -> str:
+    """
+    A short note saying only what the columns cannot.
+
+    Games left, line, power-play unit, PP share and ice time all have their
+    own columns, so repeating them here is noise that pushes the one genuinely
+    new fact off the edge of the screen. This keeps the exceptions: a role
+    that just changed, a schedule that is unusually soft or hard, and anything
+    that threatens availability. Everything else stays in the Player detail
+    tab, where there is room for it.
+    """
     bits: list[str] = []
-    n = proj.games_left
-    bits.append(f"{n} game{'s' if n != 1 else ''} left")
+
+    # Availability first -- it overrides everything else.
+    if role.injury_status:
+        bits.append(role.injury_status.upper())
+    elif role.game_time_decision:
+        bits.append("GTD")
 
     if role.role_change == "promoted":
-        bits.append(f"**promoted** - {role.role_note}")
+        bits.append(f"promoted, PP share {role.pp_share:.0%}")
     elif role.role_change == "demoted":
-        bits.append(f"role slipping - {role.role_note}")
+        bits.append("losing PP role")
     elif role.role_change == "unproven":
-        bits.append("thin recent sample - treat the projection cautiously")
-    elif role.pp_unit == 1:
-        bits.append(f"PP1 ({role.pp_share:.0%} of team PP time)")
-    elif role.pp_unit == 2:
-        bits.append(f"PP2 ({role.pp_share:.0%} share)")
-
-    if role.line_rank:
-        kind = "D" if (role.position or "").lower() in ("d", "ld", "rd") else "L"
-        bits.append(f"{kind}{role.line_rank}, {nhl_rest.seconds_to_mmss(proj.es_toi)} ES")
+        bits.append("thin sample")
 
     grades = [g.opponent_grade for g in proj.games]
     easy = sum(1 for g in grades if g in ("A", "B"))
     hard = sum(1 for g in grades if g in ("D", "F"))
-    if easy and easy >= hard:
-        bits.append(f"{easy} soft matchup{'s' if easy != 1 else ''}")
-    elif hard > easy:
-        bits.append(f"{hard} tough matchup{'s' if hard != 1 else ''}")
+    if easy and easy > hard:
+        bits.append(f"{easy} soft opp")
+    elif hard and hard > easy:
+        bits.append(f"{hard} tough opp")
 
-    if role.injury_status:
-        bits.append(f"INJURY: {role.injury_status}")
-    elif role.game_time_decision:
-        bits.append("game-time decision")
-
-    return "; ".join(bits)
+    return ", ".join(bits)
 
 
 def project_player(

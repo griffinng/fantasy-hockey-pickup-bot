@@ -124,7 +124,16 @@ COLUMN_CONFIG = {
         "PP%", help="Share of team power-play time over the last 14 days",
         format="%d%%",
     ),
-    "GP": st.column_config.NumberColumn("GP", help="Games left this week"),
+    "GP": st.column_config.NumberColumn(
+        "GP", help="Games his team has left in this fantasy week", width="small"
+    ),
+    "Why": st.column_config.TextColumn(
+        "Why",
+        help="Only what the other columns do not already say: a role that "
+             "just changed, an unusually soft or hard schedule, or an "
+             "availability risk. Full breakdown is in the Player detail tab.",
+        width="medium",
+    ),
 }
 
 
@@ -367,6 +376,28 @@ with tab_team:
 
         total = sum(e.projection.week_points for e in advice.roster)
         st.metric("Projected team points, rest of week", f"{total:.1f}")
+
+    if advice.ir_stash:
+        st.subheader("Stashed on IR")
+        st.caption(
+            "These take up no active roster spot, so they are not drop "
+            "candidates — leave them there until they are healthy. Keep value "
+            "is what they are worth per game once they return."
+        )
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    "Player": e.projection.name,
+                    "Tm": e.projection.team,
+                    "Pos": names.display_position(e.projection.position),
+                    "Keep/Gm": round(e.keep_value, 1),
+                    "Status": getattr(_role(e.projection), "injury_status", "") or "IR",
+                }
+                for e in advice.ir_stash
+            ]),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -176,6 +176,21 @@ def build_roster_view(
     return entries, unscored
 
 
+def split_ir(entries: list[RosterEntry]) -> tuple[list[RosterEntry], list[RosterEntry]]:
+    """
+    Separate active players from those stashed on IR.
+
+    An IR player is not competing for an active roster spot, so ranking him
+    alongside everyone else by "droppability" is actively misleading -- he
+    sorts straight to the top on zero projected points and reads as the
+    obvious cut, when in fact he is costing you nothing and the right move is
+    usually to leave him there until he is healthy.
+    """
+    active = [e for e in entries if not e.on_ir]
+    stashed = [e for e in entries if e.on_ir]
+    return active, stashed
+
+
 def suggest_moves(
     roster: list[RosterEntry],
     candidates: list[PlayerProjection],
@@ -270,6 +285,7 @@ class Advice:
     moves_remaining: int = 0
     expected_goalie_appearances: float = 0.0
     goalie_minimum_at_risk: bool = False
+    ir_stash: list[RosterEntry] = dataclasses.field(default_factory=list)
 
 
 def build_advice(
@@ -301,7 +317,8 @@ def build_advice(
 
     roster_ids = [r.nhl_id for r in roster_refs if r.nhl_id]
     unresolved = [r.raw for r in roster_refs if not r.nhl_id]
-    roster, unscored = build_roster_view(roster_refs, projections)
+    all_entries, unscored = build_roster_view(roster_refs, projections)
+    roster, ir_stash = split_ir(all_entries)
 
     roster_id_set = set(roster_ids)
     fa_ids = {r.nhl_id for r in fa_refs if r.nhl_id}
@@ -340,6 +357,7 @@ def build_advice(
         moves_remaining=remaining,
         expected_goalie_appearances=expected_app,
         goalie_minimum_at_risk=at_risk,
+        ir_stash=ir_stash,
     )
 
 
@@ -394,11 +412,24 @@ def format_advice(advice: Advice) -> str:
         )
         for entry in advice.roster:
             p = entry.projection
-            note = p.why[:46]
             lines.append(
-                f"{p.name:<24} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
+                f"{p.name:<24} {p.team:<4} "
+                f"{names.display_position(p.position):<4} {p.games_left:>3} "
                 f"{role_label(p):<9} {p.week_points:>7.2f} "
-                f"{entry.keep_value:>8.2f}  {note}"
+                f"{entry.keep_value:>8.2f}  {p.why[:34]}"
+            )
+        lines.append("")
+
+    if advice.ir_stash:
+        lines.append("STASHED ON IR -- costs you no active roster spot")
+        lines.append("-" * 96)
+        for entry in advice.ir_stash:
+            p = entry.projection
+            lines.append(
+                f"{p.name:<24} {p.team:<4} "
+                f"{names.display_position(p.position):<4} "
+                f"keep value {entry.keep_value:>5.2f}/gm  -- leave him there "
+                f"until he is healthy"
             )
         lines.append("")
 
@@ -421,7 +452,7 @@ def format_advice(advice: Advice) -> str:
         lines.append(
             f"{flag}{p.name:<23} {p.team:<4} {names.display_position(p.position):<4} {p.games_left:>3} "
             f"{role_label(p):<9} {p.week_points:>7.2f} {p.confidence:>5.0%}  "
-            f"{p.why[:52]}"
+            f"{p.why[:34]}"
         )
     lines.append("")
 

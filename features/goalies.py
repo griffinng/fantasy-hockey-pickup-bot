@@ -306,14 +306,14 @@ def project_goalies(
             min(1.0, 0.3 + 0.7 * min(1.0, starts / 12.0)) * (1.0 if depth else 0.7), 2
         )
 
+        # Short, like the skater note: the columns carry games and depth, so
+        # this says only what they cannot.
         depth_label = (
-            "projected starter" if depth == 1
-            else "backup" if depth else "no depth listing"
+            "starter" if depth == 1 else "backup" if depth else "unlisted"
         )
         proj.why = (
-            f"{len(games)} team game{'s' if len(games) != 1 else ''} left; "
-            f"{depth_label}; {proj.expected_starts:.1f} expected start(s); "
-            f"{save_pct:.3f} save pct (regressed)"
+            f"{depth_label}, {proj.expected_starts:.1f} starts, "
+            f"{save_pct:.3f} sv%"
         )
         out[pid] = proj
 
