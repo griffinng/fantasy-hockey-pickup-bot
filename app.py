@@ -300,8 +300,9 @@ def apply_filters(
     return out
 
 
-tab_pickups, tab_today, tab_team, tab_moves, tab_detail = st.tabs(
-    ["Pickups", "Today's lineup", "My Team", "Moves", "Player detail"]
+# Add / Drop leads: the decision comes first, the data that supports it after.
+tab_moves, tab_pickups, tab_today, tab_team, tab_detail = st.tabs(
+    ["Add / Drop", "Pickups", "Today's lineup", "My Team", "Player detail"]
 )
 
 
@@ -725,49 +726,125 @@ with tab_team:
 # ---------------------------------------------------------------------------
 
 with tab_moves:
-    st.subheader("Suggested add / drop pairs")
-    st.caption(
-        f"**{advice.moves_remaining} add(s) left this week** "
-        f"({config.ACQUISITIONS_USED_THIS_WEEK} of "
-        f"{config.MAX_ACQUISITIONS_PER_WEEK} used). Keep "
-        f"`ACQUISITIONS_USED_THIS_WEEK` in `config.py` current, or this will "
-        f"suggest more moves than your league allows."
-    )
+    moves = advice.moves or []
+    remaining = getattr(advice, "moves_remaining", 0)
 
+    st.subheader("What to do")
     if not advice.roster:
-        st.warning("Load your roster in the sidebar to get move suggestions.")
-    elif not advice.moves:
-        st.success("No move improves your week. Stand pat.")
+        st.warning("Load your roster in the sidebar to get add/drop advice.")
+    elif remaining <= 0:
+        st.info(
+            f"No acquisitions left this week — you have used all "
+            f"{config.MAX_ACQUISITIONS_PER_WEEK}.",
+            icon="🚫",
+        )
+    elif not moves:
+        st.success(
+            "**Stand pat.** No available player improves the lineup you can "
+            "already field this week. That is a real answer, not a missing "
+            "one — your slots are full on the days that matter.",
+            icon="✅",
+        )
     else:
-        for i, move in enumerate(advice.moves, 1):
-            with st.container(border=True):
-                left, mid, right = st.columns([3, 3, 2])
-                with left:
-                    st.markdown(f"**ADD** {move.add.name}")
-                    st.caption(
-                        f"{move.add.team} · {names.display_position(move.add.position)} · "
-                        f"{advisor.role_label(move.add)} · {move.add.games_left} games"
-                    )
-                    st.caption(move.add.why)
-                with mid:
-                    st.markdown(f"**DROP** {move.drop.name}")
-                    st.caption(
-                        f"{move.drop.projection.team} · "
-                        f"{names.display_position(move.drop.projection.position)} · "
-                        f"{advisor.role_label(move.drop.projection)} · "
-                        f"{move.drop.projection.games_left} games"
-                    )
-                    st.caption(move.drop.projection.why)
-                with right:
-                    st.metric("This week", f"+{move.week_gain:.1f}")
-                    st.caption(f"Keep value {-move.keep_cost:+.1f}/gm")
-                if move.warning:
-                    st.warning(move.warning, icon="⚠️")
+        gain_total = sum(m.week_gain for m in moves)
+        c1, c2 = st.columns(2)
+        c1.metric(
+            f"{len(moves)} move{'s' if len(moves) != 1 else ''} worth making",
+            f"+{gain_total:.1f} pts",
+        )
+        c2.metric("Adds left this week", remaining)
+        st.caption(
+            "Ranked by what each swap actually does to the lineups you can "
+            "field this week, solved exactly rather than compared on "
+            "projection. Entirely up to you whether and when to act."
+        )
+
+    for i, m in enumerate(moves, 1):
+        sw = getattr(m, "swap", None)
+        with st.container(border=True):
+            left, right = st.columns([5, 2])
+            with left:
+                st.markdown(
+                    f"### {i}. Add **{m.add.name}** · drop **{m.drop.name}**"
+                )
+                add_bits = [
+                    f"{m.add.team} · {names.display_position(m.add.position)}",
+                    advisor.role_label(m.add),
+                    f"{m.add.games_left} games left",
+                ]
+                st.markdown("**In:** " + " · ".join(add_bits))
+                drop_p = m.drop.projection
+                drop_bits = [
+                    f"{drop_p.team} · {names.display_position(drop_p.position)}",
+                    advisor.role_label(drop_p),
+                    f"{drop_p.games_left} games left",
+                ]
+                st.markdown("**Out:** " + " · ".join(drop_bits))
+            with right:
+                st.metric("Week gain", f"+{m.week_gain:.1f}")
+                st.caption(f"keep value {-m.keep_cost:+.1f}/gm")
+
+            if sw:
+                when = ", ".join(f"{d:%a}" for d in sw.add_starts) or "—"
+                st.markdown(
+                    f"**{m.add.name}** would start **{when}**. "
+                    f"**{m.drop.name}** is currently in your lineup "
+                    f"**{sw.drop_was_starting}** day(s) this week."
+                )
+
+            if m.warning:
+                st.warning(m.warning, icon="⚠️")
+
+            with st.expander("The data behind this"):
+                info_add = (advice.streaks or {}).get(m.add.nhl_id)
+                fit_add = (getattr(advice, "fits", {}) or {}).get(m.add.nhl_id)
+                rows = [
+                    {
+                        "": "IN — " + m.add.name,
+                        "Proj week": round(m.add.week_points, 1),
+                        "Fit +": round(fit_add.marginal, 1) if fit_add else 0.0,
+                        "Keep/Gm": advisor.keep_value(m.add),
+                        "L14 FP/Gm": getattr(m.add, "recent_fp_per_game", 0.0),
+                        "Form": getattr(m.add, "form_delta", 0.0),
+                        "Heat": round(getattr(info_add, "heat", 0.0), 1),
+                        "Role": advisor.role_label(m.add),
+                        "GP": m.add.games_left,
+                    },
+                    {
+                        "": "OUT — " + m.drop.name,
+                        "Proj week": round(drop_p.week_points, 1),
+                        "Fit +": 0.0,
+                        "Keep/Gm": round(m.drop.keep_value, 1),
+                        "L14 FP/Gm": getattr(drop_p, "recent_fp_per_game", 0.0),
+                        "Form": getattr(drop_p, "form_delta", 0.0),
+                        "Heat": 0.0,
+                        "Role": advisor.role_label(drop_p),
+                        "GP": drop_p.games_left,
+                    },
+                ]
+                st.dataframe(
+                    pd.DataFrame(rows), use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(f"**Why {m.add.name}:** {m.add.why or '—'}")
+                st.caption(f"**Why drop {m.drop.name}:** {drop_p.why or '—'}")
+                if info_add and getattr(info_add, "is_hot", False):
+                    st.caption(f"**Streak:** {info_add.label}")
+                st.caption(
+                    "Fit + is points added to the best lineup you can field. "
+                    "Keep/Gm strips the schedule out — it is what each player "
+                    "is worth on a neutral night, and it is what should stop "
+                    "you cutting a good player for a hot week."
+                )
+
+    if moves:
+        st.caption(
+            "Supporting views are in the other tabs: **Pickups** for the full "
+            "board, **Today's lineup** for what to start, **My Team** for "
+            "where your roster stands."
+        )
 
 
-# ---------------------------------------------------------------------------
-# Player detail
-# ---------------------------------------------------------------------------
 
 with tab_detail:
     st.subheader("Audit a projection")

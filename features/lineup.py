@@ -449,3 +449,97 @@ def _id_for(roster: list[Candidate], name: str) -> int | None:
         if c.name == name:
             return c.nhl_id
     return None
+
+
+# ---------------------------------------------------------------------------
+# Add / drop pairing
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class SwapResult:
+    """What swapping one player for another does to the week you can field."""
+
+    add_id: int
+    drop_id: int
+    add_name: str
+    drop_name: str
+    gain: float                      # points added to the best week
+    add_starts: list[_dt.date]
+    drop_was_starting: int           # days the dropped player was in the lineup
+
+
+def removal_cost(
+    roster: list[Candidate],
+    player_id: int,
+    days: list[_dt.date],
+    slots: dict[str, int] | None = None,
+    base_plan: WeekPlan | None = None,
+) -> float:
+    """
+    How much the best week falls if this player disappears.
+
+    This is the right way to rank a drop, and it is not the same as his
+    projection. A player can project respectably and cost nothing to lose,
+    because on every day he plays your slots are already filled by someone
+    better. The number that matters is what you would actually forfeit.
+    """
+    base = base_plan or solve_week(roster, days, slots)
+    without = solve_week(
+        [c for c in roster if c.nhl_id != player_id], days, slots
+    )
+    return round(base.total - without.total, 2)
+
+
+def evaluate_swap(
+    roster: list[Candidate],
+    addition: Candidate,
+    drop_id: int,
+    days: list[_dt.date],
+    slots: dict[str, int] | None = None,
+    base_total: float | None = None,
+    base_plan: WeekPlan | None = None,
+) -> SwapResult:
+    """
+    Exact value of one add/drop pair: solve the week with the swap applied.
+
+    Done directly rather than as (value of adding) minus (cost of dropping),
+    because those two interact. Dropping a defenceman can change which slot
+    the new player fills, and the approximation quietly misses that.
+    """
+    base_plan = base_plan or solve_week(roster, days, slots)
+    base = base_total if base_total is not None else base_plan.total
+
+    swapped = [c for c in roster if c.nhl_id != drop_id] + [addition]
+    after = solve_week(swapped, days, slots)
+
+    add_starts = []
+    for day_plan in after.days:
+        if any(
+            name == addition.name
+            for picks in day_plan.assigned.values()
+            for name, _ in picks
+        ):
+            add_starts.append(day_plan.date)
+
+    # Reuse the caller's baseline rather than re-solving it per pair. With
+    # eighteen candidates against six drop targets this was a hundred-odd
+    # redundant week solves, and it dominated the runtime.
+    before = base_plan
+    drop_days = 0
+    drop_name = next(
+        (c.name for c in roster if c.nhl_id == drop_id), str(drop_id)
+    )
+    for day_plan in before.days:
+        if any(
+            name == drop_name
+            for picks in day_plan.assigned.values()
+            for name, _ in picks
+        ):
+            drop_days += 1
+
+    return SwapResult(
+        add_id=addition.nhl_id, drop_id=drop_id,
+        add_name=addition.name, drop_name=drop_name,
+        gain=round(after.total - base, 2),
+        add_starts=add_starts, drop_was_starting=drop_days,
+    )

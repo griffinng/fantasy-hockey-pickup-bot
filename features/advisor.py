@@ -107,6 +107,7 @@ class Move:
     week_gain: float
     keep_cost: float
     warning: str = ""
+    swap: object | None = None     # lineup.SwapResult, when solved exactly
 
     @property
     def is_risky(self) -> bool:
@@ -341,6 +342,105 @@ def _rank_overall(candidates: list, fits: dict, streaks: dict) -> list:
     return ranked
 
 
+def suggest_moves_by_fit(
+    roster: list[RosterEntry],
+    roster_candidates: list,
+    candidates: list,
+    cand_lookup: dict,
+    days: list,
+    slots: dict,
+    base_plan,
+    *,
+    max_moves: int,
+    top_adds: int = 18,
+    top_drops: int = 6,
+) -> list["Move"]:
+    """
+    Add/drop pairs ranked by what they do to the lineups you can actually
+    field, rather than by raw projection.
+
+    Each pair is evaluated exactly -- the week is re-solved with the swap
+    applied -- because adding and dropping interact. Losing a defenceman can
+    change which slot the new player ends up filling, and treating the two
+    sides as independent quietly misses that.
+
+    Drop candidates are ranked by what you would forfeit by losing them, which
+    is not their projection. A player can project respectably and cost nothing,
+    because on every day he plays your slots are already filled by someone
+    better.
+    """
+    if max_moves <= 0 or not roster:
+        return []
+
+    by_id = {e.projection.nhl_id: e for e in roster}
+
+    # Cheapest players to lose, by lineup cost first and season value second.
+    droppable = []
+    for entry in roster:
+        pid = entry.projection.nhl_id
+        if entry.on_ir:
+            continue           # costs no active slot; dropping frees nothing
+        cost = lineup.removal_cost(
+            roster_candidates, pid, days, slots, base_plan=base_plan
+        )
+        droppable.append((cost, entry.keep_value, pid, entry))
+    droppable.sort(key=lambda d: (d[0], d[1]))
+    drop_pool = droppable[:top_drops]
+
+    add_pool = candidates[:top_adds]
+    base_total = base_plan.total
+
+    scored: list[tuple[float, object, RosterEntry, object]] = []
+    for cand_proj in add_pool:
+        cand = cand_lookup.get(cand_proj.nhl_id)
+        if cand is None:
+            continue
+        for cost, keep, pid, entry in drop_pool:
+            swap = lineup.evaluate_swap(
+                roster_candidates, cand, pid, days, slots,
+                base_total=base_total, base_plan=base_plan,
+            )
+            if swap.gain <= 0.05:
+                continue
+            scored.append((swap.gain, cand_proj, entry, swap))
+
+    scored.sort(key=lambda x: -x[0])
+
+    moves: list[Move] = []
+    used_adds: set[int] = set()
+    used_drops: set[int] = set()
+    for gain, cand_proj, entry, swap in scored:
+        if len(moves) >= max_moves:
+            break
+        if cand_proj.nhl_id in used_adds or entry.projection.nhl_id in used_drops:
+            continue
+        used_adds.add(cand_proj.nhl_id)
+        used_drops.add(entry.projection.nhl_id)
+
+        cand_keep = keep_value(cand_proj)
+        keep_cost = round(entry.keep_value - cand_keep, 2)
+        warning = ""
+        if entry.keep_value >= KEEP_VALUE_WARN and keep_cost > 0:
+            warning = (
+                f"{entry.name} is worth {entry.keep_value:.1f} pts/game going "
+                f"forward against {cand_keep:.1f} for {cand_proj.name}. This "
+                f"wins the week and costs you the rest of the season — only do "
+                f"it if you need points now."
+            )
+        elif _role_change(entry.projection) == "promoted":
+            warning = (
+                f"{entry.name} was just promoted "
+                f"({entry.projection.role.role_note}) — his numbers may be "
+                f"about to rise."
+            )
+
+        moves.append(Move(
+            add=cand_proj, drop=entry, week_gain=round(gain, 2),
+            keep_cost=keep_cost, warning=warning, swap=swap,
+        ))
+    return moves
+
+
 def build_index() -> names.NameIndex:
     """Name index covering skaters and goalies."""
     index = names.NameIndex.from_nhl_rows(nhl_rest.skater_summary_season())
@@ -502,7 +602,16 @@ def build_advice(
     remaining = max(
         0, config.MAX_ACQUISITIONS_PER_WEEK - config.ACQUISITIONS_USED_THIS_WEEK
     )
-    moves = suggest_moves(roster, candidates, max_moves=remaining)
+    cand_lookup = {
+        p.nhl_id: lineup.candidate_from_projection(
+            p, lineup.eligibility_of(fa_refs_by_id.get(p.nhl_id), p.position)
+        )
+        for p in candidates
+    }
+    moves = suggest_moves_by_fit(
+        roster, roster_candidates, candidates, cand_lookup, days, slots,
+        base_plan, max_moves=remaining,
+    )
 
     roster_goalies = [
         e.projection for e in roster
