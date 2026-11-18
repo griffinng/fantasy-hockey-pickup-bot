@@ -64,6 +64,17 @@ def _role_change(proj) -> str:
     return getattr(role, "role_change", "") if role is not None else ""
 
 
+# Public aliases. Goalie projections deliberately carry no PlayerRole -- a
+# goalie has no line or power-play unit -- so anything iterating over a mixed
+# candidate list must go through these rather than touching `.role` directly.
+role_change = _role_change
+
+
+def role_note(proj) -> str:
+    role = getattr(proj, "role", None)
+    return getattr(role, "role_note", "") if role is not None else ""
+
+
 def role_label(proj) -> str:
     """
     Display role for either kind of projection. Goalies have no line or
@@ -472,6 +483,12 @@ class Advice:
     week_checks: list = dataclasses.field(default_factory=list)
     best_fits: list = dataclasses.field(default_factory=list)
     overall: list = dataclasses.field(default_factory=list)
+    # Every projection built this run, not just the shortlist. Nothing in the
+    # UI reads this; it exists so the daily snapshot can record what the model
+    # thought about the whole league, which is what makes a later calibration
+    # check meaningful. Scoring only the shortlist would grade the model on
+    # the players it already liked.
+    all_projections: dict = dataclasses.field(default_factory=dict)
 
     @property
     def stale_sources(self) -> list:
@@ -643,6 +660,7 @@ def build_advice(
         week_checks=week_checks,
         best_fits=_rank_by_fit(candidates, fits),
         overall=_rank_overall(candidates, fits, streak_info),
+        all_projections=projections,
     )
 
 

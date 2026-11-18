@@ -59,6 +59,34 @@ listings aren't available, so the backtest runs *without* the promotion signal,
 which is the part most likely to add value. Weight sensitivity is flat (every
 setting tried beat the baseline), so the result isn't a tuning artifact.
 
+### Scoring a single night
+
+```bash
+python -m tests.score_predictions            # last night
+python -m tests.score_predictions --date 2026-11-17
+```
+
+Grades one slate: projected vs actual for every skater who dressed, bias and
+calibration by projection bucket, your roster, the waiver pool, and the names
+the report actually put in front of you that morning.
+
+Two things to keep in mind when reading it.
+
+**One night is almost no sample.** A single game is mostly variance. The
+population bias and calibration lines are worth something across ~400 skaters;
+anything about an individual player is an anecdote.
+
+**A projection is `E[points if he plays] x P(he plays)`.** Everyone in the
+sample played, so the availability factor shows up as fake pessimism. The
+scorecard splits bias by whether that discount was applied, and the
+discount-divided-out row is the honest number.
+
+`scripts/daily_update.py` writes `reports/predictions/<date>.json` on every
+run, recording each player's per-game projection *and the line and PP unit he
+was listed on*. That last part cannot be recovered later — Daily Faceoff only
+publishes today's lines — so without the snapshot, scoring a past day silently
+grades a weaker model than the one that gave the advice.
+
 ## Setup
 
 ### Your roster and the free-agent list
@@ -175,8 +203,9 @@ features/  roles.py           merges listed deployment with measured ice time
            projection.py      the model
            advisor.py         add/drop pairing
            scoring.py         league scoring, one place
-tests/     backtest.py        model vs baseline
-scripts/   daily_update.py    daily refresh + report
+tests/     backtest.py        model vs baseline, over whole weeks
+           score_predictions.py  one night: projected vs actual
+scripts/   daily_update.py    daily refresh + report + prediction snapshot
            verify_auth.py     Yahoo access check
 ```
 
