@@ -195,20 +195,72 @@ def reconstruct_day_projections(
     return out
 
 
-def load_snapshot(day: _dt.date) -> dict[int, float] | None:
-    path = SNAPSHOT_DIR / f"{day:%Y-%m-%d}.json"
-    if not path.exists():
-        return None
+def _read_snapshot(path: Path, day: _dt.date) -> tuple[dict[int, float], dict, set[str]]:
+    """Projections for `day` out of one snapshot file, plus the teams covered."""
     blob = json.loads(path.read_text())
-    games = blob.get("per_game", {})
+    key = f"{day:%Y-%m-%d}"
+    meta = blob.get("meta") or {}
+    proj = {
+        int(pid): float(days[key])
+        for pid, days in (blob.get("per_game") or {}).items()
+        if key in days
+    }
+    teams = {
+        (meta.get(str(pid)) or {}).get("team", "") for pid in proj
+    } - {""}
+    return proj, blob, teams
+
+
+def load_snapshot(
+    day: _dt.date, teams_that_played: set[str] | None = None
+) -> tuple[dict[int, float], str] | None:
+    """
+    Best stored prediction for `day`, and a note on where it came from.
+
+    Picking the file named after the day is the obvious thing and it is wrong.
+    The projection model only ever looks at games that have NOT started, so a
+    snapshot written at 18:32 has already dropped every team that faced off at
+    16:00 -- including, on 2026-11-19, the one player the day's decision was
+    actually about. Scoring against it silently grades the model on whatever
+    late games happened to be left.
+
+    So: consider every snapshot written on or before `day`, newest first, and
+    take the first one that covers most of the teams that really played. A
+    morning run beats the previous evening's because it has that day's
+    confirmed lines; a run made mid-slate loses to both.
+    """
+    candidates = sorted(SNAPSHOT_DIR.glob("*.json"), reverse=True)
+    best: tuple[dict[int, float], dict, str] | None = None
+    for path in candidates:
+        try:
+            as_of = _dt.date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if as_of > day:
+            continue
+        proj, blob, teams = _read_snapshot(path, day)
+        if not proj:
+            continue
+        if teams_that_played:
+            covered = len(teams & teams_that_played) / len(teams_that_played)
+            if covered < 0.80:
+                # Written mid-slate: the teams already playing are missing.
+                continue
+            note = (
+                f"{path.name} (generated {blob.get('generated', '?')}, "
+                f"covers {covered:.0%} of teams that played)"
+            )
+        else:
+            note = f"{path.name} (generated {blob.get('generated', '?')})"
+        best = (proj, blob, note)
+        break
+
+    if best is None:
+        return None
+    proj, blob, note = best
     for pid, m in (blob.get("meta") or {}).items():
         PLAY_PROB[int(pid)] = float(m.get("play_prob", 1.0) or 1.0)
-    return {
-        int(pid): float(v)
-        for pid, days in games.items()
-        for d, v in days.items()
-        if d == f"{day:%Y-%m-%d}"
-    }
+    return proj, note
 
 
 # ---------------------------------------------------------------------------
@@ -338,11 +390,19 @@ def main() -> int:
         f"{', '.join(teams_played)}"
     )
 
-    proj = load_snapshot(day)
-    source = "stored snapshot (exact)"
+    loaded = load_snapshot(day, set(teams_played))
+    proj = None
+    source = ""
+    if loaded is not None:
+        proj, note = loaded
+        source = f"stored snapshot, exact -- {note}"
     if proj is None:
         if args.snapshot:
-            print(f"\nNo snapshot at {SNAPSHOT_DIR / f'{day:%Y-%m-%d}.json'}.")
+            print(
+                f"\nNo usable snapshot for {day}. A file written mid-slate is "
+                "skipped, because\nit has already dropped the teams that had "
+                "started."
+            )
             return 1
         print(
             "\nNo stored snapshot for that date, so projections are being "

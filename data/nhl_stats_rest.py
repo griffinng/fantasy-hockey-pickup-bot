@@ -19,6 +19,7 @@ All responses are cached through `data/cache.py`.
 from __future__ import annotations
 
 import datetime as _dt
+import time as _time
 from typing import Any, Iterable
 
 import config
@@ -29,9 +30,21 @@ BASE = "https://api.nhle.com/stats/rest/en"
 
 _SESSION = http.build_session("fantasy-hockey-dashboard/2.0")
 
-# Reports return every skater in one shot at limit=-1 (~780 rows), so there is
-# no reason to paginate.
-_ALL = "-1"
+# This used to say that limit=-1 returned every skater in one request, so
+# there was no reason to paginate. That stopped being true: the endpoint now
+# caps a response at 100 rows whatever limit you ask for, while still
+# reporting the real row count in `total`.
+#
+# The failure was silent and total. Nothing errored -- requests just came back
+# with the first 100 skaters, which meant positional priors built from a
+# tenth of the league, a name index that could not resolve most of the roster,
+# and projections for whoever happened to sort first. Always page until
+# `total` is reached, and never trust a single response to be complete.
+_PAGE_SIZE = 100
+
+# A season report is ~800 rows; this is a guard against an endpoint that
+# reports a `total` it will not actually serve, so the loop cannot spin.
+_MAX_PAGES = 100
 
 
 # ---------------------------------------------------------------------------
@@ -49,18 +62,65 @@ def current_season_id(today: _dt.date | None = None) -> str:
 
 
 def _fetch(report: str, cayenne: str, *, aggregate: bool, ttl: int) -> list[dict]:
-    """GET one stats report, cached. Returns the `data` array."""
-    params: dict[str, str] = {"limit": _ALL, "cayenneExp": cayenne}
-    if aggregate:
-        params["isAggregate"] = "true"
-        params["isGame"] = "true"
+    """
+    GET one stats report, paging until complete, cached as a whole.
 
+    Only a fully-assembled report is cached. A partial read caused by a
+    mid-page network failure must not be stored, or every later run inherits
+    a silently truncated league until the TTL expires.
+    """
     cached = cache.get("nhl_rest", report, cayenne, aggregate)
     if cached is not None:
         return cached
 
-    payload = http.get_json(_SESSION, f"{BASE}/{report}", params=params)
-    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    rows: list[dict] = []
+    total: int | None = None
+    for page in range(_MAX_PAGES):
+        params: dict[str, str] = {
+            "limit": str(_PAGE_SIZE),
+            "start": str(page * _PAGE_SIZE),
+            "cayenneExp": cayenne,
+        }
+        if aggregate:
+            params["isAggregate"] = "true"
+            params["isGame"] = "true"
+
+        # Retry the page itself. The session already retries at the HTTP
+        # layer, but a page that comes back empty or malformed is not an HTTP
+        # error, and losing one page out of eight would otherwise fail the
+        # whole report and take the daily run down with it.
+        payload = None
+        for attempt in range(3):
+            try:
+                payload = http.get_json(_SESSION, f"{BASE}/{report}", params=params)
+            except http.FetchError:
+                if attempt == 2:
+                    raise
+                payload = None
+            if isinstance(payload, dict) and payload.get("data"):
+                break
+            _time.sleep(1.5 * (attempt + 1))
+
+        if not isinstance(payload, dict):
+            break
+        batch = payload.get("data") or []
+        rows.extend(batch)
+        if total is None:
+            total = payload.get("total")
+        # Stop on a short page as well as on the count, so a `total` that
+        # disagrees with what is served cannot loop to _MAX_PAGES.
+        if len(batch) < _PAGE_SIZE:
+            break
+        if isinstance(total, int) and len(rows) >= total:
+            break
+
+    if isinstance(total, int) and len(rows) < total:
+        raise http.FetchError(
+            f"{report}: got {len(rows)} of {total} rows -- refusing to cache a "
+            f"partial report, since a truncated league silently corrupts every "
+            f"projection downstream."
+        )
+
     cache.set("nhl_rest", rows, ttl, report, cayenne, aggregate)
     return rows
 
