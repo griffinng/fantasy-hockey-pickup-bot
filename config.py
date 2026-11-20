@@ -76,7 +76,7 @@ MAX_ACQUISITIONS_PER_WEEK = 4
 # How many you have already used this week. Yahoo shows this on your team page
 # ("You have used N of your 4 player adds for this week"). Keep it current, or
 # the bot will cheerfully recommend more moves than the league will let you make.
-ACQUISITIONS_USED_THIS_WEEK = 1
+ACQUISITIONS_USED_THIS_WEEK = 2
 
 # ---------------------------------------------------------------------------
 # Scoring algorithm weights

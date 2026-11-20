@@ -229,35 +229,41 @@ def load_snapshot(
     morning run beats the previous evening's because it has that day's
     confirmed lines; a run made mid-slate loses to both.
     """
-    candidates = sorted(SNAPSHOT_DIR.glob("*.json"), reverse=True)
-    best: tuple[dict[int, float], dict, str] | None = None
-    for path in candidates:
+    found = []
+    for path in sorted(SNAPSHOT_DIR.glob("*.json"), reverse=True):
         try:
             as_of = _dt.date.fromisoformat(path.stem)
         except ValueError:
             continue
         if as_of > day:
             continue
-        proj, blob, teams = _read_snapshot(path, day)
-        if not proj:
-            continue
-        if teams_that_played:
-            covered = len(teams & teams_that_played) / len(teams_that_played)
-            if covered < 0.80:
-                # Written mid-slate: the teams already playing are missing.
-                continue
-            note = (
-                f"{path.name} (generated {blob.get('generated', '?')}, "
-                f"covers {covered:.0%} of teams that played)"
-            )
-        else:
-            note = f"{path.name} (generated {blob.get('generated', '?')})"
-        best = (proj, blob, note)
-        break
-
-    if best is None:
+        proj, blob, _teams = _read_snapshot(path, day)
+        if proj:
+            found.append((as_of, path, proj, blob))
+    if not found:
         return None
-    proj, blob, note = best
+
+    # Contamination shows up in the player COUNT, not the team list. A run made
+    # at 18:32 still carried all 24 teams -- a handful of stragglers per club
+    # was enough -- while holding 91 players for the day against 606 in the
+    # previous morning's file. Every team whose game had finished had simply
+    # rolled forward to its next one. So: take the fullest view of the day, and
+    # among snapshots that are comparably full, the latest, since a morning run
+    # has that day's confirmed lines and the evening before does not.
+    fullest = max(len(p) for _, _, p, _ in found)
+    usable = [f for f in found if len(f[2]) >= 0.70 * fullest]
+    as_of, path, proj, blob = max(usable, key=lambda f: f[0])
+
+    note = (
+        f"{path.name} (generated {blob.get('generated', '?')}, "
+        f"{len(proj)} players projected for the day)"
+    )
+    if len(found) > 1:
+        skipped = [
+            f"{p.name}:{len(pr)}" for a, p, pr, _ in found if p != path
+        ]
+        note += f"; passed over {', '.join(skipped)}"
+
     for pid, m in (blob.get("meta") or {}).items():
         PLAY_PROB[int(pid)] = float(m.get("play_prob", 1.0) or 1.0)
     return proj, note

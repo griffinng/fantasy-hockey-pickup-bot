@@ -379,9 +379,16 @@ def appearance_shortfall(
     about: a 2-appearance week does not cost you a little, it costs you every
     goalie point you earned.
 
-    Returns (expected_appearances, is_at_risk).
+    Appearances ALREADY MADE this week count toward the minimum, so they have
+    to be added in. Counting only the starts still to come compares a
+    part-week number against a full-week threshold, which fires a false alarm
+    every midweek -- and an alarm that cries wolf on Wednesday is worse than
+    no alarm at all, because the one Saturday it is right gets ignored too.
+
+    Returns (expected_total_appearances, is_at_risk).
     """
-    expected = sum(g.expected_starts for g in roster_goalies)
+    banked = sum(int(getattr(g, "games_played_this_week", 0) or 0) for g in roster_goalies)
+    expected = banked + sum(g.expected_starts for g in roster_goalies)
     return round(expected, 2), expected < minimum
 
 
